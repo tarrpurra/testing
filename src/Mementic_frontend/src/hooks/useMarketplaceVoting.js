@@ -12,8 +12,9 @@ export const useMarketplaceVoting = (
   setTopMemes,
   votingControls
 ) => {
-  const { toast } = useToast();
-  const votingLock = useRef(false);
+  // Ensure parameters are properly initialized (safe versions)
+  const safeIsAuthenticated = Boolean(isAuthenticated);
+  const safeHasProfileName = Boolean(hasProfileName);
   const {
     power,
     VOTE_COST,
@@ -64,7 +65,7 @@ export const useMarketplaceVoting = (
   };
 
   const handleVote = async (memeId, currentVotes = 0, memeOwner = null, principal) => {
-    if (!isAuthenticated) {
+    if (!safeIsAuthenticated) {
       toast({
         title: "Authentication Required",
         description: "Please login to vote on memes",
@@ -73,7 +74,7 @@ export const useMarketplaceVoting = (
       return;
     }
 
-    if (!hasProfileName) {
+    if (!safeHasProfileName) {
       toast({
         title: "Set a username first",
         description: "Choose a username before interacting with marketplace memes.",

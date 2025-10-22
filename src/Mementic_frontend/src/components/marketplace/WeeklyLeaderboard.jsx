@@ -66,7 +66,9 @@ const WeeklyLeaderboard = ({ timeLeft, onPreview, isWeekCompleted = false, exter
             if (entry.meme_data) {
               // Fetch user profile for the meme owner
               const owner = entry.meme_data.owner;
-              const principal = typeof owner === "string" ? owner : owner.toText();
+              const principal = owner
+                ? (typeof owner === "string" ? owner : owner.toText())
+                : null;
 
               return {
                 entry,

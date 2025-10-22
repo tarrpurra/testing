@@ -525,16 +525,25 @@ fn perform_vote(
     let meme_created_ns = normalize_timestamp_ns(meme.created_at);
     let meme_week = get_week_id(meme_created_ns);
     let period = get_or_create_current_week();
+
+    // Check if meme's calculated week matches current week (accounts for reset offset)
+    let is_correct_week = meme_week == period.week_id;
+
     // Do not allow voting before the new week starts (buffer window)
     if now < period.start_time {
         return Err("Voting for the new week hasn't started yet".into());
     }
+
     // Only allow voting on memes created within the active period window
     // Grace: if a meme was posted within BUFFER_S before start_time, treat it as eligible
     let buffer_ns: u64 = BUFFER_S * 1_000_000_000;
     let within_grace = meme.created_at >= period.start_time.saturating_sub(buffer_ns);
     let within_window = meme.created_at >= period.start_time && meme.created_at <= period.end_time;
-    if !(within_window || within_grace) {
+
+    // Allow voting if either:
+    // 1. Meme is within the time window, OR
+    // 2. Meme's calculated week matches current week (handles reset scenarios)
+    if !(within_window || within_grace || is_correct_week) {
         return Err("Can only vote on memes from the current week".into());
     }
     if period.is_completed || now > period.end_time {
@@ -660,6 +669,10 @@ pub fn remove_vote(meme_id: u64) -> Result<VoteResponse, String> {
     let meme_created_ns = normalize_timestamp_ns(meme.created_at);
     let meme_week = get_week_id(meme_created_ns);
     let period = get_or_create_current_week();
+
+    // Check if meme's calculated week matches current week (accounts for reset offset)
+    let is_correct_week = meme_week == period.week_id;
+
     if meme_week != period.week_id {
         return Err("Can only remove votes from the current week".into());
     }

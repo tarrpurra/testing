@@ -6,10 +6,10 @@ import Index from "./Pages/index";
 import Login from "./Pages/Login";
 import Landing from "./Pages/Landing";
 import MyPlace from "./Pages/MyPlace";
-import Marketplace from "./Pages/PreMarketplace";
+import PreMarketplace from "./Pages/PreMarketplace";
 import Portfolio from "./Pages/Portfolio";
 import Wallet_Page from "./Pages/Wallet";
-import PreMarketplace from "./Pages/Marketplace";
+import Marketplace from "./Pages/Marketplace";
 import Auction from "./Pages/Auction";
 import MemeNFTPlace from "./Pages/MemeNFTPlace";
 import Feedback from "./Pages/Feedback";
@@ -41,8 +41,8 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/landing" element={<Landing />} />
             <Route path="/myplace" element={<MyPlace />} />
-            <Route path="/pre-marketplace" element={<Marketplace />} />
-            <Route path="/marketplace" element={<PreMarketplace />} />
+            <Route path="/pre-marketplace" element={<PreMarketplace />} />
+            <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/auction" element={<Auction />} />
             <Route path="/meme-nft" element={<MemeNFTPlace />} />
             <Route path="/feedback" element={<Feedback />} />

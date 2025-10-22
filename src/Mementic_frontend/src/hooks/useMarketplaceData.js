@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import backendService from "../services/backendService";
 import {
   ensureArray,
@@ -13,6 +13,12 @@ import {
 } from "../utils/marketplaceUtils";
 
 export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, searchQuery) => {
+  // Ensure parameters are properly initialized
+  const safeIsAuthenticated = Boolean(isAuthenticated);
+  const safeHasProfileName = Boolean(hasProfileName);
+  const safePage = Number.isFinite(Number(page)) ? Number(page) : 1;
+  const safeSort = typeof sort === "string" ? sort : "trending";
+  const safeSearchQuery = typeof searchQuery === "string" ? searchQuery : "";
   const leaderboardCacheRef = useRef(loadLeaderboardCache());
   const cachedLeaderboard = leaderboardCacheRef.current;
   const cachedWeekId = Number.isFinite(Number(cachedLeaderboard?.weekId))
@@ -228,15 +234,141 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
     };
   }, [currentWeekStatus, finalizeAckWeekId]);
 
-  // Fetch Top 3
+  // Manual refresh function for leaderboard data
+  const refreshLeaderboard = useCallback(async () => {
+    setLoadingTop(true);
+    setErrorMsg("");
+
+    try {
+      // Try getTopLikedMemes first (most reliable for vote sorting)
+      let leaderboard = await backendService.getTopLikedMemes(50);
+      let entries = ensureArray(leaderboard?.top_memes);
+
+      // Fallback to legacy function if the first one fails or returns empty
+      if (!entries || entries.length === 0) {
+        console.log("Primary leaderboard empty, trying legacy...");
+        const legacyResult = await backendService.getCurrentLeaderboardLegacy(50);
+        entries = ensureArray(legacyResult?.top_memes);
+      }
+
+      // Final fallback to current leaderboard
+      if (!entries || entries.length === 0) {
+        console.log("Legacy leaderboard empty, trying current...");
+        const currentResult = await backendService.getCurrentLeaderboard(0, 50);
+        entries = ensureArray(currentResult);
+      }
+
+      if (entries.length === 0) {
+        setTopMemes([]);
+        return;
+      }
+
+      const resolved = await Promise.all(
+        entries.map(async (entry) => {
+          const memeId = safeBigIntToNumber(entry?.meme_id);
+          if (!Number.isFinite(memeId) || memeId <= 0) {
+            return null;
+          }
+          try {
+            const meme = await backendService.getMeme(memeId);
+            return meme ? { entry, meme } : null;
+          } catch (error) {
+            console.warn(`Failed to fetch meme ${memeId} for leaderboard:`, error);
+            return null;
+          }
+        })
+      );
+
+      const valid = resolved.filter(Boolean);
+      if (valid.length === 0) {
+        setTopMemes([]);
+        return;
+      }
+
+      const uniqueOwners = [
+        ...new Set(
+          valid
+            .map(({ meme }) => {
+              const owner = meme?.owner ?? meme?.meme_data?.owner ?? meme?.creator;
+              if (owner) {
+                if (typeof owner === "string") return owner;
+                if (typeof owner === "object" && owner.toText) return owner.toText();
+                return String(owner);
+              }
+              return null;
+            })
+            .filter(Boolean)
+        ),
+      ];
+
+      const userProfiles = new Map();
+      for (const principal of uniqueOwners) {
+        try {
+          const profile = await backendService.getUserProfileByPrincipal(principal);
+          if (profile) {
+            userProfiles.set(principal, profile);
+          }
+        } catch (error) {
+          console.warn(`Failed to fetch profile for ${principal}:`, error);
+        }
+      }
+
+      const arr = valid.map(({ entry, meme }) => {
+        const upvotes = safeBigIntToNumber(entry?.votes ?? entry?.upvotes ?? entry?.votes?.upvotes ?? 0);
+        const downvotes = safeBigIntToNumber(entry?.downvotes ?? entry?.votes?.downvotes ?? 0);
+        const normalized = normalizeMeme(
+          meme,
+          { rank: entry?.rank, votes: { upvotes, downvotes } },
+          userProfiles
+        );
+
+        return {
+          ...normalized,
+          votes: upvotes - downvotes, // Net votes for sorting
+          likeCount: upvotes,
+          downvoteCount: downvotes,
+          voteScore: upvotes - downvotes,
+          voteDetails: { upvotes, downvotes },
+        };
+      });
+
+      // Sort by net votes (upvotes - downvotes) to ensure proper ranking
+      const sortedByVotes = arr.sort((a, b) => {
+        const scoreA = (a.voteDetails?.upvotes || 0) - (a.voteDetails?.downvotes || 0);
+        const scoreB = (b.voteDetails?.upvotes || 0) - (b.voteDetails?.downvotes || 0);
+        return scoreB - scoreA; // Descending order
+      });
+
+      // Filter out invalid entries
+      const cleanedFiltered = sortedByVotes.filter((meme) => {
+        const isFinalized = Boolean(meme?.finalized);
+        const isWeekEnded = Boolean(meme?.week_ended);
+        const hasVotes = (meme?.voteDetails?.upvotes || 0) > 0;
+        return !isFinalized && !isWeekEnded && hasVotes;
+      });
+
+      setTopMemes(cleanedFiltered);
+      setLeaderboardCount(cleanedFiltered.length);
+
+      console.log(`Refreshed leaderboard: ${cleanedFiltered.length} memes loaded`);
+    } catch (error) {
+      console.error("Failed to refresh leaderboard:", error);
+      setErrorMsg("Failed to refresh leaderboard data.");
+    } finally {
+      setLoadingTop(false);
+    }
+  }, []);
+
+  // Fetch Top 3 - using getTopLikedMemes for reliable vote-based sorting
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoadingTop((prev) => (topMemes.length === 0 ? true : prev));
       setErrorMsg("");
       try {
-        const leaderboard = await backendService.getCurrentLeaderboard(0, 1000);
-        const entries = ensureArray(leaderboard);
+        // Use getTopLikedMemes for reliable vote-based sorting instead of getCurrentLeaderboard
+        const leaderboard = await backendService.getTopLikedMemes(50); // Get more to have selection
+        const entries = ensureArray(leaderboard?.top_memes);
 
         if (entries.length === 0) {
           if (!cancelled) setTopMemes([]);
@@ -245,10 +377,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
 
         const resolved = await Promise.all(
           entries.map(async (entry) => {
-            const rawId = Array.isArray(entry?.meme_id)
-              ? entry.meme_id[0]
-              : entry?.meme_id;
-            const memeId = safeBigIntToNumber(rawId);
+            const memeId = safeBigIntToNumber(entry?.meme_id);
             if (!Number.isFinite(memeId) || memeId <= 0) {
               return null;
             }
@@ -297,29 +426,37 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
         }
 
         const arr = valid.map(({ entry, meme }) => {
-          const upvotes = safeBigIntToNumber(entry?.votes ?? entry?.votes?.upvotes ?? 0);
+          const upvotes = safeBigIntToNumber(entry?.votes ?? entry?.upvotes ?? 0);
+          const downvotes = safeBigIntToNumber(entry?.downvotes ?? 0);
           const normalized = normalizeMeme(
             meme,
-            { rank: entry?.rank, votes: { upvotes } },
+            { rank: entry?.rank, votes: { upvotes, downvotes } },
             userProfiles
           );
 
           return {
             ...normalized,
-            votes: upvotes,
+            votes: upvotes - downvotes, // Net votes for sorting
             likeCount: upvotes,
-            downvoteCount: 0,
-            voteScore: upvotes,
-            voteDetails: { upvotes, downvotes: 0 },
+            downvoteCount: downvotes,
+            voteScore: upvotes - downvotes,
+            voteDetails: { upvotes, downvotes },
           };
         });
 
-        // Trust backend current leaderboard snapshot; only remove invalid entries locally
+        // Sort by net votes (upvotes - downvotes) to ensure proper ranking
+        const sortedByVotes = arr.sort((a, b) => {
+          const scoreA = (a.voteDetails?.upvotes || 0) - (a.voteDetails?.downvotes || 0);
+          const scoreB = (b.voteDetails?.upvotes || 0) - (b.voteDetails?.downvotes || 0);
+          return scoreB - scoreA; // Descending order
+        });
+
+        // Trust backend data; only remove invalid entries locally
         // Filter out finalized, week-ended memes, and memes with 0 votes from leaderboard
-        const cleanedFiltered = arr.filter((meme) => {
+        const cleanedFiltered = sortedByVotes.filter((meme) => {
           const isFinalized = Boolean(meme?.finalized);
           const isWeekEnded = Boolean(meme?.week_ended);
-          const hasVotes = (meme?.votes ?? 0) > 0;
+          const hasVotes = (meme?.voteDetails?.upvotes || 0) > 0;
           return !isFinalized && !isWeekEnded && hasVotes;
         });
 
@@ -328,6 +465,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
           setLeaderboardCount(cleanedFiltered.length);
         }
       } catch (e) {
+        console.error("Failed to load top memes:", e);
         if (!cancelled) setErrorMsg("Failed to load top memes.");
       } finally {
         if (!cancelled) setLoadingTop(false);
@@ -336,17 +474,17 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
     return () => {
       cancelled = true;
     };
-  }, [currentWeekId]);
+  }, []); // Empty dependency array - only run once on mount
 
   // Fetch paginated list
   const fetchList = async ({ reset = false } = {}) => {
-    if (!isAuthenticated || !hasProfileName) {
+    if (!safeIsAuthenticated || !safeHasProfileName) {
       if (reset) {
         setMemes([]);
         setTotal(0);
       }
       setLoadingList(false);
-      if (!isAuthenticated || !hasProfileName) {
+      if (!safeIsAuthenticated || !safeHasProfileName) {
         setErrorMsg("Please login to view the marketplace.");
       }
       return;
@@ -358,12 +496,12 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
     setErrorMsg("");
     try {
       const pageSize = PAGE_SIZE;
-      const offset = (page - 1) * pageSize;
+      const offset = (safePage - 1) * pageSize;
       const cards = await backendService.listPremarketMemes(offset, pageSize);
       const entries = ensureArray(cards);
 
       if (entries.length === 0) {
-        if (reset || page === 1) {
+        if (reset || safePage === 1) {
           setMemes([]);
         }
         setTotal(offset);
@@ -390,7 +528,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
 
       const valid = resolved.filter(Boolean);
       if (valid.length === 0) {
-        if (reset || page === 1) {
+        if (reset || safePage === 1) {
           setMemes([]);
         }
         setTotal(offset);
@@ -433,19 +571,19 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
       const getViews = (meme) => safeBigIntToNumber(meme?.views || 0);
       const getSale = (meme) => meme?.sale_metadata ?? meme?.market_data;
 
-      if (sort === "newest") {
+      if (safeSort === "newest") {
         arr.sort((a, b) => {
           const dateDiff = getCreatedAt(b) - getCreatedAt(a);
           if (dateDiff !== 0) return dateDiff;
           return getVotes(b) - getVotes(a);
         });
-      } else if (sort === "top") {
+      } else if (safeSort === "top") {
         arr.sort((a, b) => {
           const voteDiff = getVotes(b) - getVotes(a);
           if (voteDiff !== 0) return voteDiff;
           return getViews(b) - getViews(a);
         });
-      } else if (sort === "listed") {
+      } else if (safeSort === "listed") {
         arr.sort((a, b) => {
           const aListed = getSale(a)?.is_listed ? 1 : 0;
           const bListed = getSale(b)?.is_listed ? 1 : 0;
@@ -485,7 +623,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
 
         setTotal(offset + filteredForListing.length);
         setMemes((prev) =>
-          page === 1 || reset ? filteredForListing : [...ensureArray(prev), ...filteredForListing]
+          safePage === 1 || reset ? filteredForListing : [...ensureArray(prev), ...filteredForListing]
         );
 
       // Refresh vote counts for newly loaded memes
@@ -531,7 +669,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
             });
 
             setMemes((prev) => {
-              if (page === 1 || reset) {
+              if (safePage === 1 || reset) {
                 return sanitizedUpdates;
               }
 
@@ -566,14 +704,14 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
   };
 
   useEffect(() => {
-    fetchList({ reset: page === 1 });
-  }, [page, sort, currentWeekId, previousWeekId]);
+    fetchList({ reset: safePage === 1 });
+  }, [safePage, safeSort, safeSearchQuery]); // Depend on external parameters only
 
   useEffect(() => {
-    if (isAuthenticated && hasProfileName) {
+    if (safeIsAuthenticated && safeHasProfileName) {
       fetchList({ reset: true });
     }
-  }, [isAuthenticated, hasProfileName, currentWeekId, previousWeekId]);
+  }, [safeIsAuthenticated, safeHasProfileName]); // Depend on external parameters only
 
   return {
     topMemes,
@@ -588,5 +726,6 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
     marketplaceCount,
     leaderboardCount,
     currentWeekStatus,
+    refreshLeaderboard,
   };
 };

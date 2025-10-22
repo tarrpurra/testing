@@ -8,6 +8,7 @@ import MarketplaceFeed from "../components/marketplace/MarketplaceFeed";
 import PreviewModal from "../components/marketplace/PreviewModal";
 import backendService from "../services/backendService";
 import useVotingPower from "../hooks/useVotingPower";
+import { useMarketplaceData } from "../hooks/useMarketplaceData";
 import { useMarketplaceVoting } from "../hooks/useMarketplaceVoting";
 import { formatRemaining } from "../utils/marketplaceUtils";
 
@@ -16,6 +17,11 @@ const PreMarketplace = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+
+  // 3. Get profile name from username (safe versions)
+  const sanitizedUsername = typeof username === "string" ? username.trim() : "";
+  const safeHasProfileName = sanitizedUsername.length > 0;
+  const safeIsAuthenticated = Boolean(isAuthenticated);
 
   // Add a console command for admin reset
   useEffect(() => {
@@ -46,8 +52,6 @@ const PreMarketplace = () => {
   const [selectedCreator, setSelectedCreator] = useState("all");
   const [page, setPage] = useState(1);
 
-  // Week countdown is computed after we have currentWeekStatus from useMarketplaceData
-
   // Debounce search
   const [searchQuery, setSearchQuery] = useState("");
   useEffect(() => {
@@ -58,7 +62,7 @@ const PreMarketplace = () => {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  // Custom hooks
+  // Custom hooks - moved after state variables to avoid temporal dead zone
   const {
     topMemes,
     memes,
@@ -69,7 +73,7 @@ const PreMarketplace = () => {
     setTopMemes,
     setMemes,
     currentWeekStatus,
-  } = useMarketplaceData(isAuthenticated, hasProfileName, page, sort, searchQuery);
+  } = useMarketplaceData(safeIsAuthenticated, safeHasProfileName, page, sort, searchQuery);
 
   // Voting power
   const votingControls = useVotingPower();
@@ -96,8 +100,8 @@ const PreMarketplace = () => {
     handleVote,
     checkMemeOwnership,
   } = useMarketplaceVoting(
-    isAuthenticated,
-    hasProfileName,
+    safeIsAuthenticated,
+    safeHasProfileName,
     memes,
     setMemes,
     setTopMemes,
@@ -215,7 +219,7 @@ const PreMarketplace = () => {
       return;
     }
 
-    if (!isAuthenticated) {
+    if (!safeIsAuthenticated) {
       toast({
         title: "Login required",
         description: "Sign in to access the marketplace.",
@@ -228,7 +232,7 @@ const PreMarketplace = () => {
       return;
     }
 
-    if (!hasProfileName) {
+    if (!safeHasProfileName) {
       toast({
         title: "Complete your profile",
         description: "Choose a username before exploring the marketplace.",
@@ -238,7 +242,7 @@ const PreMarketplace = () => {
         state: { from: location.pathname, requireUsername: true },
       });
     }
-  }, [authLoading, hasProfileName, isAuthenticated, location.pathname, navigate, toast]);
+  }, [authLoading, safeHasProfileName, safeIsAuthenticated, location.pathname, navigate, toast]);
 
   // Add a console command for admin reset
   useEffect(() => {
@@ -286,7 +290,7 @@ const PreMarketplace = () => {
     );
   }
 
-  if (!isAuthenticated || !hasProfileName) {
+  if (!safeIsAuthenticated || !safeHasProfileName) {
     return (
       <div className="min-h-screen bg-background">
         <Navigation />
@@ -351,7 +355,7 @@ const PreMarketplace = () => {
             canLoadMore={canLoadMore}
             onVote={(id, votes, owner) => handleVote(id, votes, owner, principal)}
             onVoteSuccess={() => undefined}
-            isAuthenticated={isAuthenticated}
+            isAuthenticated={safeIsAuthenticated}
             currentUserPrincipal={principal}
             onOpenPreview={openPreview}
             setSelectedCreator={setSelectedCreator}
@@ -369,9 +373,9 @@ const PreMarketplace = () => {
         onClose={() => setPreviewOpen(false)}
         meme={selectedMeme}
         onLike={(id, votes, owner) => handleVote(id, votes, owner, principal)}
-        isAuthenticated={isAuthenticated}
+        isAuthenticated={safeIsAuthenticated}
         isOwn={selectedMeme ? checkMemeOwnership(selectedMeme, principal) : false}
-        hasProfileName={hasProfileName}
+        hasProfileName={safeHasProfileName}
       />
     </div>
   );
