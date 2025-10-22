@@ -6,13 +6,10 @@ import Navigation from "../components/Navigation";
 import WeeklyLeaderboard from "../components/marketplace/WeeklyLeaderboard";
 import MarketplaceFeed from "../components/marketplace/MarketplaceFeed";
 import PreviewModal from "../components/marketplace/PreviewModal";
-import { useMarketplaceData } from "../hooks/useMarketplaceData";
+import backendService from "../services/backendService";
 import useVotingPower from "../hooks/useVotingPower";
 import { useMarketplaceVoting } from "../hooks/useMarketplaceVoting";
 import { formatRemaining } from "../utils/marketplaceUtils";
-import backendService from "../services/backendService";
-
-
 
 const PreMarketplace = () => {
   const { principal, username, isLoading: authLoading, isAuthenticated } = useAuth();
@@ -20,8 +17,28 @@ const PreMarketplace = () => {
   const location = useLocation();
   const { toast } = useToast();
 
-  const sanitizedUsername = typeof username === "string" ? username.trim() : "";
-  const hasProfileName = sanitizedUsername.length > 0;
+  // Add a console command for admin reset
+  useEffect(() => {
+    // Make reset function available in console for admin use
+    if (typeof window !== 'undefined') {
+      window.resetMementicSystem = async () => {
+        try {
+          console.log("Calling system reset...");
+          const result = await backendService.resetSystemToWeek1();
+          console.log("Reset result:", result);
+          // Clear the cache to force refresh
+          localStorage.removeItem('mementic::premarket::leaderboard');
+          // Refresh the page to reload all data
+          window.location.reload();
+          return result;
+        } catch (error) {
+          console.error("Reset failed:", error);
+          throw error;
+        }
+      };
+      console.log("Admin command available: run resetMementicSystem() in console");
+    }
+  }, []);
 
   // UI State
   const [searchInput, setSearchInput] = useState("");
@@ -222,6 +239,29 @@ const PreMarketplace = () => {
       });
     }
   }, [authLoading, hasProfileName, isAuthenticated, location.pathname, navigate, toast]);
+
+  // Add a console command for admin reset
+  useEffect(() => {
+    // Make reset function available in console for admin use
+    if (typeof window !== 'undefined') {
+      window.resetMementicSystem = async () => {
+        try {
+          console.log("Calling system reset...");
+          const result = await backendService.resetSystemToWeek1();
+          console.log("Reset result:", result);
+          // Clear the cache to force refresh
+          localStorage.removeItem('mementic::premarket::leaderboard');
+          // Refresh the page to reload all data
+          window.location.reload();
+          return result;
+        } catch (error) {
+          console.error("Reset failed:", error);
+          throw error;
+        }
+      };
+      console.log("Admin command available: run resetMementicSystem() in console");
+    }
+  }, []);
 
   // Preview Modal State
   const [previewOpen, setPreviewOpen] = useState(false);

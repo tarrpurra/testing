@@ -48,25 +48,25 @@ impl Storable for UserMemeKey {
 thread_local! {
     // CRITICAL: Use shared MEMORY_MANAGER from state module to prevent memory corruption
     // key = meme_id, val = MemeVotes
-    static VOTES: RefCell<StableBTreeMap<u64, MemeVotes, Mem>> =
+    pub static VOTES: RefCell<StableBTreeMap<u64, MemeVotes, Mem>> =
         RefCell::new(StableBTreeMap::init(
             crate::state::MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(40)))
         ));
 
     // key = UserMemeKey(user, meme_id), val = VoteRecord
-    static USER_VOTES: RefCell<StableBTreeMap<UserMemeKey, VoteRecord, Mem>> =
+    pub static USER_VOTES: RefCell<StableBTreeMap<UserMemeKey, VoteRecord, Mem>> =
         RefCell::new(StableBTreeMap::init(
             crate::state::MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(41)))
         ));
 
     // key = week_id, val = WeeklyPeriod
-    static WEEKLY_PERIODS: RefCell<StableBTreeMap<u64, WeeklyPeriod, Mem>> =
+    pub static WEEKLY_PERIODS: RefCell<StableBTreeMap<u64, WeeklyPeriod, Mem>> =
         RefCell::new(StableBTreeMap::init(
             crate::state::MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(42)))
         ));
 
     // key = user Principal, val = UserPower for current (or last) week
-    static USER_POWERS: RefCell<StableBTreeMap<Principal, UserPower, Mem>> =
+    pub static USER_POWERS: RefCell<StableBTreeMap<Principal, UserPower, Mem>> =
         RefCell::new(StableBTreeMap::init(
             crate::state::MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(43)))
         ));
@@ -254,6 +254,7 @@ impl Storable for UserPower {
 // ---------- Helpers ----------
 
 const WEEK_S: u64 = crate::time::WEEK_SECONDS; // 7 days expressed in seconds
+const BUFFER_S: u64 = 60; // buffer between weeks in seconds
 const WEEKLY_POWER_CAP: u32 = 100;
 const DEFAULT_VOTE_COST: u32 = 10;
 

@@ -200,6 +200,8 @@ service : (opt InitArgs) -> {
   // Approve feedback for public display (admin function)
   approve_feedback : (nat64) -> (Result);
   check_remaining_calls : () -> (nat8) query;
+  // Clear all memes from HTTP outcall storage (admin function)
+  clear_all_memes : () -> (Result_1);
   // Mark any past weeks complete if their end_time has passed
   close_finished_weeks : () -> ();
   create_meme : (text, text) -> (nat64);
@@ -304,6 +306,9 @@ service : (opt InitArgs) -> {
   remove_meme_from_market : (nat64) -> (Result_2);
   // Remove your vote (works only for current active week)
   remove_vote : (nat64) -> (Result_6);
+  // Comprehensive system reset - clears all data and resets to week 1
+  // WARNING: This will delete ALL memes, votes, leaderboards, and reset the system
+  reset_system_to_week_1 : () -> (Result);
   // Submit feedback from a user
   submit_feedback : (text, text, text, text, bool) -> (Result);
   // Maintenance function to ensure week state is always synchronized

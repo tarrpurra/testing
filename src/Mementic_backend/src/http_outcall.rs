@@ -1152,7 +1152,7 @@ pub fn clear_all_memes() -> Result<u32, String> {
     // Clear USER_MEMES by removing each entry individually
     USER_MEMES.with(|um| {
         let mut map = um.borrow_mut();
-        let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();
+        let keys_to_remove: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
         for key in keys_to_remove {
             map.remove(&key);
             cleared_count += 1;
@@ -1162,7 +1162,7 @@ pub fn clear_all_memes() -> Result<u32, String> {
     // Clear UNIQUE_USERS by removing each entry individually
     UNIQUE_USERS.with(|uu| {
         let mut map = uu.borrow_mut();
-        let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();
+        let keys_to_remove: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
         for key in keys_to_remove {
             map.remove(&key);
         }
@@ -1171,13 +1171,13 @@ pub fn clear_all_memes() -> Result<u32, String> {
     // Clear RATE by removing each entry individually
     RATE.with(|r| {
         let mut map = r.borrow_mut();
-        let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();
+        let keys_to_remove: Vec<_> = map.iter().map(|entry| entry.key().clone()).collect();
         for key in keys_to_remove {
             map.remove(&key);
         }
     });
 
-    // Clear MEME_COUNTER by removing each entry individually
+    // Clear MEME_COUNTER by removing each entry individually (u8 is Copy)
     MEME_COUNTER.with(|mc| {
         let mut map = mc.borrow_mut();
         let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();

@@ -989,8 +989,12 @@ class BackendService {
   }
 
   /**
-    * Get all feedback (admin function)
-    */
+   * Reset system to week 1 (admin function)
+   */
+  async resetSystemToWeek1() {
+    const result = await this._safeCall('reset_system_to_week_1');
+    return this._unwrapResult(result, "reset_system_to_week_1 failed");
+  }
   async getAllFeedback() {
     return await this._safeCall('get_all_feedback');
   }
