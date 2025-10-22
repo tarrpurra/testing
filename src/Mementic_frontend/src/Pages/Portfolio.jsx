@@ -554,27 +554,31 @@ const Portfolio = () => {
             .filter((ent) => ent.status === 'Used')
             .sort((a, b) => (b.usedAtMs || 0) - (a.usedAtMs || 0));
 
-          // If minted and entitled, try to fetch finalized winner votes from Top-3 snapshot for that week
+          // Try to fetch finalized winner votes from Top-3 snapshot for the contest week.
+          // Prefer used entitlement (minted), else active, else latest expired.
           let winnerVotes = null;
-          // Also fetch live votes as a fallback for active entitlements (week not yet finalized)
+          // Also fetch live votes as a fallback for weeks not yet finalized
           let liveVotes = null;
           const mintedEntitlement = usedEntitlements.length > 0 ? usedEntitlements[0] : null;
-          if (mintedEntitlement && Number.isFinite(numericId)) {
+          const expiredEntitlements = entitlementList.filter((ent) => ent.status === 'Expired');
+          const latestExpired = expiredEntitlements.sort((a,b)=> (b.expiresAtMs||0)-(a.expiresAtMs||0))[0] || null;
+          const referenceEnt = mintedEntitlement || activeEntitlement || latestExpired;
+          if (referenceEnt && Number.isFinite(numericId)) {
             try {
-              const top3 = await backendService.getTop3ForWeek(mintedEntitlement.weekId);
+              const top3 = await backendService.getTop3ForWeek(referenceEnt.weekId);
               const match = Array.isArray(top3)
                 ? top3.find((e) => Number(e?.meme_id) === numericId)
                 : null;
               if (match) {
-                winnerVotes = Number(match.votes ?? match.upvotes ?? 0);
-                if (!Number.isFinite(winnerVotes)) winnerVotes = null;
+                const parsed = Number(match.votes ?? match.upvotes ?? 0);
+                winnerVotes = Number.isFinite(parsed) ? parsed : null;
               }
             } catch (err) {
-              // ignore and fall back to baseUi.votes
+              // ignore and fall back to live/base vote counts
             }
           }
 
-          // For active entitlements or when snapshot missing, try to fetch live votes from backend
+          // For when snapshot missing or week still active, try to fetch live votes from backend
           if (Number.isFinite(numericId) && (winnerVotes == null)) {
             try {
               const voteData = await backendService.getMemeVotes(BigInt(numericId));
@@ -893,9 +897,9 @@ const Portfolio = () => {
                   <div className="flex items-center justify-center mb-2">
                     <Sparkles className="h-5 w-5 text-primary" />
                   </div>
-                  <p className="text-xs uppercase tracking-wide text-primary/70">Voting Power</p>
-                  <p className="mt-2 text-2xl font-semibold text-primary">{Math.max(0, Number(votingPower ?? 0))}/{WEEKLY_CAP}</p>
-                  <p className="text-xs text-primary/60 mt-1">Remaining this week</p>
+                  <p className="text-xs uppercase tracking-wide text-primary/70">Memes Generated</p>
+                  <p className="mt-2 text-2xl font-semibold text-primary">{generatedCount.toLocaleString()}</p>
+                  <p className="text-xs text-primary/60 mt-1">Total generated</p>
                 </div>
 
                 <div className="rounded-2xl border border-secondary/30 bg-secondary/10 p-4 text-center">

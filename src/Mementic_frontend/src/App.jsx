@@ -32,7 +32,7 @@ function App() {
     <ToastProvider>
       <IdentityKitProvider
         signerClientOptions={{
-          targets: ["uxrrr-q7777-77774-qaaaq-cai"] // **IMPORTANT**: these are *your* canisters, not ledger canisters
+          targets: ["g3bm6-baaaa-aaaaa-qcexq-cai"] // **IMPORTANT**: these are *your* canisters, not ledger canisters
         }}>
         <AuthProvider>
           <ToastDisplay />

@@ -20,7 +20,7 @@ import {
 import { Input } from "../components/ui/Input";
 import PageShell from "../components/layout/PageShell";
 import ListingModal from "../components/ListingModal";
-import NFTDetailModal from "../components/marketplace/NFTDetailModal";
+import PreviewModal from "../components/marketplace/PreviewModal";
 import backendService from "../services/backendService";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../hooks/use-toast";
@@ -54,11 +54,9 @@ const Marketplace = () => {
     isSubmitting: false,
     error: null,
   });
-  const [nftDetailModal, setNftDetailModal] = useState({
-    open: false,
-    nft: null,
-    isBuying: false,
-  });
+  // Preview Modal (same component/UX as PreMarketplace)
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [selectedMeme, setSelectedMeme] = useState(null);
   const [listingDialog, setListingDialog] = useState({
     open: false,
     winner: null,
@@ -82,6 +80,42 @@ const Marketplace = () => {
     }
     const num = Number(raw);
     return Number.isFinite(num) ? num / 100000000 : null;
+  };
+
+  const resolveOwnerUsername = async (ownerPrincipal) => {
+    if (!ownerPrincipal) return "Anonymous";
+    try {
+      const profile = await backendService.getUserProfileByPrincipal(ownerPrincipal);
+      if (profile?.username) {
+        return Array.isArray(profile.username) ? profile.username[0] : profile.username;
+      }
+    } catch {}
+    return `${ownerPrincipal.slice(0, 8)}...${ownerPrincipal.slice(-6)}`;
+  };
+
+  const fetchMintMeta = async (memeId) => {
+    try {
+      const ents = await backendService.getEntitlementsForMeme(BigInt(memeId));
+      if (Array.isArray(ents) && ents.length) {
+        const usedList = ents
+          .map((e) => ({ used: e?.used_at ? (Array.isArray(e.used_at) ? e.used_at[0] : e.used_at) : null }))
+          .filter((e) => typeof e.used === "bigint" || typeof e.used === "number");
+        const mintedAtNs = usedList.length
+          ? Number(usedList.reduce((a, b) => (Number(b.used) > Number(a.used) ? b : a)).used)
+          : null;
+
+        // take the latest entitlement for expiry display
+        const latestEnt = ents.reduce((a, b) => (Number(b?.expires_at ?? 0) > Number(a?.expires_at ?? 0) ? b : a));
+        const expiresRaw = latestEnt?.expires_at;
+        const expiresAtNs = Array.isArray(expiresRaw) ? expiresRaw[0] : expiresRaw;
+        const expiresAtMs = typeof expiresAtNs === 'bigint' || typeof expiresAtNs === 'number'
+          ? Math.floor(Number(expiresAtNs) / 1_000_000)
+          : null;
+
+        return { mintedAtNs, entitlementExpiresAtMs: expiresAtMs };
+      }
+    } catch {}
+    return { mintedAtNs: null, entitlementExpiresAtMs: null };
   };
 
   const parseSaleMetadata = (raw) => {
@@ -194,41 +228,12 @@ const Marketplace = () => {
               const ownerCandidate =
                 meme?.owner ?? meme?.meme_data?.owner ?? null;
               const ownerPrincipal = ownerCandidate
-                ? typeof ownerCandidate === "object" && ownerCandidate.toText
-                  ? ownerCandidate.toText()
-                  : String(ownerCandidate)
+                ? (typeof ownerCandidate === "object" && ownerCandidate.toText
+                    ? ownerCandidate.toText()
+                    : String(ownerCandidate))
                 : "";
+              const ownerUsername = await resolveOwnerUsername(ownerPrincipal);
               const imageUrl = meme?.meme_data?.image_url ?? null;
-
-              // Fetch username for owner
-              let ownerUsername = "Anonymous";
-              if (ownerPrincipal) {
-                try {
-                  const profile =
-                    await backendService.getUserProfileByPrincipal(
-                      ownerPrincipal
-                    );
-                  if (profile?.username) {
-                    ownerUsername = Array.isArray(profile.username)
-                      ? profile.username[0]
-                      : profile.username;
-                  } else {
-                    ownerUsername = `${ownerPrincipal.slice(
-                      0,
-                      8
-                    )}...${ownerPrincipal.slice(-6)}`;
-                  }
-                } catch (error) {
-                  console.warn(
-                    `Failed to fetch username for ${ownerPrincipal}:`,
-                    error
-                  );
-                  ownerUsername = `${ownerPrincipal.slice(
-                    0,
-                    8
-                  )}...${ownerPrincipal.slice(-6)}`;
-                }
-              }
 
               return {
                 memeId: Number(entry.meme_id),
@@ -313,51 +318,48 @@ const Marketplace = () => {
                   }
                 }
                 const idNum = Number(
-                  typeof memeIdCandidate === "object" &&
-                    memeIdCandidate?.toString
+                  typeof memeIdCandidate === "object" && memeIdCandidate?.toString
                     ? memeIdCandidate.toString()
                     : memeIdCandidate
                 );
                 const meme = await backendService.getMeme(BigInt(idNum));
-                const sale = await backendService.getSaleMetadataForMeme(
-                  BigInt(idNum)
-                );
+                const sale = await backendService.getSaleMetadataForMeme(BigInt(idNum));
                 const saleSnapshot = parseSaleMetadata(sale);
                 const captionField = meme?.meme_data?.caption;
-                const caption = Array.isArray(captionField)
-                  ? captionField[0]
-                  : captionField;
+                const caption = Array.isArray(captionField) ? captionField[0] : captionField;
                 const prompt = meme?.meme_data?.prompt ?? "";
                 const title =
                   (caption && String(caption).trim()) ||
                   (prompt && String(prompt).trim()) ||
                   `Meme #${idNum}`;
                 const imageUrl = meme?.meme_data?.image_url ?? null;
-                const ownerCandidate =
-                  meme?.owner ?? meme?.meme_data?.owner ?? null;
+                const ownerCandidate = meme?.owner ?? meme?.meme_data?.owner ?? null;
                 const ownerPrincipal = ownerCandidate
-                  ? typeof ownerCandidate === "object" && ownerCandidate.toText
-                    ? ownerCandidate.toText()
-                    : String(ownerCandidate)
+                  ? (typeof ownerCandidate === "object" && ownerCandidate.toText
+                      ? ownerCandidate.toText()
+                      : String(ownerCandidate))
                   : "";
+                const ownerUsername = await resolveOwnerUsername(ownerPrincipal);
+                const { mintedAtNs, entitlementExpiresAtMs } = await fetchMintMeta(idNum);
                 return {
                   memeId: idNum,
                   title,
                   imageUrl,
                   ownerPrincipal,
+                  ownerUsername,
                   saleSnapshot,
+                  mintedAtNs,
+                  entitlementExpiresAtMs,
                 };
               } catch {
                 return null;
               }
             })
           );
-          const cleaned = enriched
-            .filter(Boolean)
-            .filter((it) => it.saleSnapshot?.isListed);
+          const cleaned = enriched.filter(Boolean).filter((it) => it.saleSnapshot?.isListed);
           setListings(cleaned);
         } catch {}
-
+        
         // Refresh sale snapshot for affected winner if applicable
         const changedId = Number(e?.detail?.memeId ?? 0);
         if (changedId) {
@@ -437,13 +439,17 @@ const Marketplace = () => {
                   ? ownerCandidate.toText()
                   : String(ownerCandidate)
                 : "";
-
+              const ownerUsername = await resolveOwnerUsername(ownerPrincipal);
+              const { mintedAtNs, entitlementExpiresAtMs } = await fetchMintMeta(idNum);
               return {
                 memeId: idNum,
                 title,
                 imageUrl,
                 ownerPrincipal,
+                ownerUsername,
                 saleSnapshot,
+                mintedAtNs,
+                entitlementExpiresAtMs,
               };
             } catch (e) {
               return null;
@@ -702,34 +708,22 @@ const Marketplace = () => {
     }
   };
 
-  const openNFTDetail = (nft) => {
-    // Enrich with known context: owner principal and latest finalized week if available
-    const ownerName = nft.ownerUsername || nft.ownerPrincipal || "Anonymous";
-    const enriched = {
-      ...nft,
-      ownerUsername: ownerName,
-      weekId:
-        nft.weekId ??
-        (latestWeek && (latestWeek.week_id ?? latestWeek.weekId)) ??
-        null,
+  const openPreview = (memeLike) => {
+    // Map winner/listing objects to `PreviewModal` meme shape
+    const mapped = {
+      id: memeLike.memeId ?? memeLike.id ?? 0,
+      title: memeLike.title ?? "",
+      image_url: memeLike.imageUrl ?? memeLike.image_url ?? null,
+      caption: memeLike.caption ?? "",
+      prompt: memeLike.prompt ?? "",
+      creator: memeLike.ownerUsername || memeLike.ownerPrincipal || memeLike.creator || "Anonymous",
+      votes: Number(memeLike.votes ?? 0),
+      views: Number(memeLike.views ?? 0),
+      mintedAtNs: memeLike.mintedAtNs || null,
+      entitlementExpiresAtMs: memeLike.entitlementExpiresAtMs || null,
     };
-    setNftDetailModal({ open: true, nft: enriched, isBuying: false });
-  };
-
-  const closeNFTDetail = () => {
-    setNftDetailModal({
-      open: false,
-      nft: null,
-      isBuying: false,
-    });
-  };
-
-  const handleBuyNFT = async (nft) => {
-    // Placeholder: buying flow coming soon
-    toast({
-      title: "Buy coming soon",
-      description: "Purchases will be enabled shortly.",
-    });
+    setSelectedMeme(mapped);
+    setPreviewOpen(true);
   };
 
   const modalWinner = mintDialog.winner;
@@ -961,17 +955,13 @@ const Marketplace = () => {
                   <div
                     key={`listing-${item.memeId}`}
                     className="group relative rounded-2xl border border-border/40 bg-card overflow-hidden hover:border-primary/50 hover:shadow-2xl transition-all duration-300 cursor-pointer"
-                    onClick={() =>
-                      openNFTDetail({
-                        memeId: item.memeId,
-                        title: item.title,
-                        imageUrl: item.imageUrl,
-                        ownerPrincipal: item.ownerPrincipal,
-                        saleSnapshot: item.saleSnapshot,
-                        rank: item.rank ?? undefined,
-                        votes: item.votes ?? undefined,
-                      })
-                    }
+                    onClick={() => openPreview({
+                      memeId: item.memeId,
+                      title: item.title,
+                      imageUrl: item.imageUrl,
+                      ownerPrincipal: item.ownerPrincipal,
+                      votes: item.votes ?? 0,
+                    })}
                   >
                     <div className="relative aspect-square overflow-hidden bg-muted/20">
                       {item.imageUrl ? (
@@ -1172,7 +1162,7 @@ const Marketplace = () => {
                     <div
                       key={winner.memeId}
                       className="group relative rounded-2xl border border-border/40 bg-card overflow-hidden hover:border-primary/50 hover:shadow-2xl transition-all duration-300 cursor-pointer"
-                      onClick={() => openNFTDetail(winner)}
+                      onClick={() => openPreview(winner)}
                     >
                       {/* NFT Image */}
                       <div className="relative aspect-square overflow-hidden bg-muted/20">
@@ -1452,13 +1442,16 @@ const Marketplace = () => {
         )}
       </section>
 
-      {/* NFT Detail Modal */}
-      <NFTDetailModal
-        nft={nftDetailModal.nft}
-        isOpen={nftDetailModal.open}
-        onClose={closeNFTDetail}
-        onBuy={handleBuyNFT}
-        isBuying={nftDetailModal.isBuying}
+      {/* Unified Preview Modal (same as PreMarketplace) */}
+      <PreviewModal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        meme={selectedMeme}
+        // Disable voting in marketplace preview by passing inert props
+        onLike={() => {}}
+        isAuthenticated={false}
+        isOwn={false}
+        hasProfileName={false}
       />
 
       {mintDialog.open && modalWinner ? (
@@ -1591,14 +1584,7 @@ const Marketplace = () => {
         title="List on marketplace"
         confirmLabel="Publish listing"
       />
-      {/* NFT Detail Modal */}
-      <NFTDetailModal
-        isOpen={nftDetailModal.open}
-        nft={nftDetailModal.nft}
-        onClose={closeNFTDetail}
-        onBuy={handleBuyNFT}
-        isBuying={nftDetailModal.isBuying}
-      />
+      
     </PageShell>
   );
 };

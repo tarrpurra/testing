@@ -1,7 +1,6 @@
 use crate::index::week_meme_ids;
 use crate::model::{MemeId, Timestamp, TopEntry, WeekId, WeeklyLeaderboard};
-use crate::state::get_active_week_id;
-use crate::state::{FINALIZED_LEADERBOARDS, LIVE_VOTES};
+use crate::state::{get_active_week_id, FINALIZED_LEADERBOARDS, LIVE_VOTES};
 
 pub const DEFAULT_TOP_N: usize = 50;
 

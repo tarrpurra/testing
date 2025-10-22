@@ -288,14 +288,51 @@ fn get_week_id(timestamp_ns: u64) -> u64 {
 /// Create or fetch current week period
 fn get_or_create_current_week() -> WeeklyPeriod {
     let now = time();
-    let week_id = get_week_id(now);
 
+    // Prefer an existing active period (now within [start, end] and not completed)
+    if let Some(active) = WEEKLY_PERIODS.with(|wp| {
+        let periods = wp.borrow();
+        periods
+            .iter()
+            .filter_map(|entry| {
+                let p = entry.value();
+                if !p.is_completed && now >= p.start_time && now <= p.end_time {
+                    Some(p)
+                } else {
+                    None
+                }
+            })
+            .next()
+    }) {
+        return active;
+    }
+
+    // If there is a future period (buffer window), return that upcoming period
+    if let Some(upcoming) = WEEKLY_PERIODS.with(|wp| {
+        let periods = wp.borrow();
+        periods
+            .iter()
+            .filter_map(|entry| {
+                let p = entry.value();
+                if !p.is_completed && now < p.start_time {
+                    Some(p)
+                } else {
+                    None
+                }
+            })
+            .next()
+    }) {
+        return upcoming;
+    }
+
+    // Otherwise, create a new period starting now (initial bootstrapping)
+    let week_id = get_week_id(now);
     WEEKLY_PERIODS.with(|wp| {
         let mut periods = wp.borrow_mut();
         if let Some(period) = periods.get(&week_id) {
             period
         } else {
-            let week_start = week_id * WEEK_S * 1_000_000_000;
+            let week_start = now + BUFFER_S * 1_000_000_000; // start after buffer
             let week_end = week_start + (WEEK_S * 1_000_000_000);
             let new_period = WeeklyPeriod {
                 week_id,
@@ -304,14 +341,15 @@ fn get_or_create_current_week() -> WeeklyPeriod {
                 is_completed: false,
                 meme_count: 0,
             };
-            periods.insert(week_id, new_period.clone());
-            new_period
+            periods.insert(week_id, new_period);
+            // Return the inserted period as an owned value
+            periods.get(&week_id).expect("inserted week period must exist")
         }
     })
 }
 
 /// Return the current active week id, creating the period if needed
-fn get_current_week_id() -> u64 {
+pub fn get_current_week_id() -> u64 {
     get_or_create_current_week().week_id
 }
 
@@ -486,9 +524,16 @@ fn perform_vote(
     let meme_created_ns = normalize_timestamp_ns(meme.created_at);
     let meme_week = get_week_id(meme_created_ns);
     let period = get_or_create_current_week();
-    let current_week = period.week_id;
-
-    if meme_week != current_week {
+    // Do not allow voting before the new week starts (buffer window)
+    if now < period.start_time {
+        return Err("Voting for the new week hasn't started yet".into());
+    }
+    // Only allow voting on memes created within the active period window
+    // Grace: if a meme was posted within BUFFER_S before start_time, treat it as eligible
+    let buffer_ns: u64 = BUFFER_S * 1_000_000_000;
+    let within_grace = meme.created_at >= period.start_time.saturating_sub(buffer_ns);
+    let within_window = meme.created_at >= period.start_time && meme.created_at <= period.end_time;
+    if !(within_window || within_grace) {
         return Err("Can only vote on memes from the current week".into());
     }
     if period.is_completed || now > period.end_time {
@@ -501,6 +546,7 @@ fn perform_vote(
         return Err("You have already voted on this meme".into());
     }
 
+    let current_week = period.week_id;
     spend_power(user, current_week, cost)?;
 
     USER_VOTES.with(|uv| {
@@ -521,7 +567,7 @@ fn perform_vote(
             downvotes: 0,
             total_voters: 0,
             score: 0.0,
-            created_week: meme_week,
+            created_week: current_week,
             last_vote_time: now,
         });
 
@@ -695,7 +741,7 @@ pub fn get_current_leaderboard_legacy(limit: Option<u32>) -> LegacyWeeklyLeaderb
 #[query]
 pub fn get_top_liked_memes(limit: Option<u32>) -> TopLikedLeaderboard {
     let lim = limit.unwrap_or(3).max(1).min(50) as usize;
-    let current_week_id = crate::state::get_active_week_id();
+    let current_week_id = get_current_week_id();
 
     let mut items: Vec<(u64, MemeVotes)> = VOTES.with(|v| {
         v.borrow()
@@ -937,7 +983,7 @@ fn ensure_active_week() {
             }
         } else {
             // Create the next week
-            let week_start = next_week_id * WEEK_S * 1_000_000_000;
+            let week_start = now + (BUFFER_S * 1_000_000_000);
             let week_end = week_start + (WEEK_S * 1_000_000_000);
             let new_period = WeeklyPeriod {
                 week_id: next_week_id,
@@ -1033,11 +1079,11 @@ pub fn force_finalize_current_week() -> Result<String, String> {
     let next_week_id = period.week_id + 1;
     crate::state::set_active_week_id(next_week_id);
 
-    // Create the next week period to ensure voting is ready
+    // Create the next week period to ensure voting is ready (with buffer)
     WEEKLY_PERIODS.with(|wp| {
         let mut periods = wp.borrow_mut();
         if periods.get(&next_week_id).is_none() {
-            let week_start = next_week_id * WEEK_S * 1_000_000_000;
+            let week_start = now + (BUFFER_S * 1_000_000_000);
             let week_end = week_start + (WEEK_S * 1_000_000_000);
             let new_period = WeeklyPeriod {
                 week_id: next_week_id,
@@ -1248,7 +1294,7 @@ pub fn get_lifetime_votes() -> u64 {
 
 /// Get total memes created in current week
 pub fn get_current_week_meme_count() -> u64 {
-    let week_id = crate::state::get_active_week_id();
+    let week_id = get_current_week_id();
     let meme_ids = crate::index::week_meme_ids(week_id);
     meme_ids.len() as u64
 }

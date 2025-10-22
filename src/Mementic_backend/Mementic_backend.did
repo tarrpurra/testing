@@ -312,11 +312,7 @@ service : (opt InitArgs) -> {
   transform : (TransformArgs) -> (HttpResponse) query;
   update_user_profile : (opt text, opt text) -> (Result_2);
   vote : (nat64, bool) -> (Result_2);
-  // Cast or change a vote on a meme in the **current active week**.
-  // Rejects if meme is not from current week or if the week is completed/expired.
   vote_meme : (nat64, VoteType) -> (Result_6);
-  // Cast a vote while explicitly specifying the voting power cost.
-  // Enforces the weekly voting power cap and deducts the provided cost from the caller.
   vote_with_power : (nat64, VoteType, nat32) -> (Result_6);
   whoami : () -> (principal) query;
 }

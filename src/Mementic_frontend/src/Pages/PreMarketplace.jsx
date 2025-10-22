@@ -61,15 +61,19 @@ const PreMarketplace = () => {
   // Compute time left from backend-reported remainingNs (ns -> ms)
   const timeLeft = useMemo(() => {
     const ns = Number(currentWeekStatus?.remainingNs || 0);
-    const ms = ns > 0 ? Math.floor(ns / 1_000_000) : 0;
+    if (ns <= 0) {
+      // Don't show "0d 0h 0m" - show loading state or appropriate message
+      return "Loading...";
+    }
+    const ms = Math.floor(ns / 1_000_000);
     return formatRemaining(ms);
   }, [currentWeekStatus?.remainingNs]);
 
-  // Consider timer end as completed state while rollover finalizes
-  const remainingNs = Number(currentWeekStatus?.remainingNs || 0);
-  const due = Number.isFinite(remainingNs) ? remainingNs <= 0 : false;
-  const weekCompleted = Boolean(currentWeekStatus?.isCompleted) || due;
-  const activeMemes = weekCompleted ? [] : memes;
+  // Treat week as completed only when backend reports it AND we're actually past the end time
+  const weekCompleted = Boolean(currentWeekStatus?.isCompleted) &&
+    Number(currentWeekStatus?.remainingNs || 0) <= 0;
+  console.log('PreMarketplace: currentWeekStatus =', currentWeekStatus, 'weekCompleted =', weekCompleted);
+  const activeMemes = memes;
 
   const {
     handleVote,
@@ -85,23 +89,19 @@ const PreMarketplace = () => {
 
   // Filter memes based on search query and creator
   const filteredMemes = useMemo(() => {
-    if (weekCompleted) {
-      return [];
-    }
-
-    let base = activeMemes;
+    let list = activeMemes;
     if (selectedCreator !== "all") {
-      base = base.filter((meme) => meme.creator === selectedCreator);
+      list = list.filter((meme) => meme.creator === selectedCreator);
     }
-    if (!searchQuery.trim()) return base;
+    if (!searchQuery.trim()) return list;
     const query = searchQuery.toLowerCase();
-    return base.filter(
+    return list.filter(
       (meme) =>
         (meme.title?.toLowerCase() ?? "").includes(query) ||
         (meme.caption?.toLowerCase() ?? "").includes(query) ||
         (meme.prompt?.toLowerCase() ?? "").includes(query)
     );
-  }, [activeMemes, searchQuery, selectedCreator, weekCompleted]);
+  }, [activeMemes, searchQuery, selectedCreator]);
 
   // Computed stats
   const totalVotes = useMemo(
@@ -233,26 +233,7 @@ const PreMarketplace = () => {
     setPreviewOpen(true);
   };
 
-  // Force finalize week for testing
-  const handleForceFinalize = async () => {
-    try {
-      await backendService.forceFinalizeCurrentWeek();
-      toast({
-        title: "Week Finalized!",
-        description: "Current week has been force-completed. Check winner notifications.",
-      });
-      // Refresh data
-      window.location.reload();
-    } catch (error) {
-      toast({
-        title: "Failed to finalize week",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
-  };
-
-  const canLoadMore = !weekCompleted && memes.length < total;
+  const canLoadMore = memes.length < total;
 
   if (authLoading) {
     return (
@@ -307,19 +288,12 @@ const PreMarketplace = () => {
               </div>
             </div>
           )}
-          <div className="flex justify-end mb-4">
-            <button
-              onClick={handleForceFinalize}
-              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm"
-            >
-              Force Finalize Week (Testing)
-            </button>
-          </div>
           <WeeklyLeaderboard
             timeLeft={timeLeft}
             onPreview={openPreview}
             isWeekCompleted={weekCompleted}
             externalTopMemes={topMemes}
+            onTopMemesUpdate={setTopMemes}
           />
 
           <MarketplaceFeed

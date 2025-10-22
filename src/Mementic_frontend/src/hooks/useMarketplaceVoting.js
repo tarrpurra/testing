@@ -160,7 +160,8 @@ export const useMarketplaceVoting = (
       // Refresh the current-week leaderboard after successful vote
       setTimeout(async () => {
         try {
-          const res = await backendService.getCurrentLeaderboard(0, 3);
+          // Fetch a larger slice to ensure newly voted memes appear
+          const res = await backendService.getCurrentLeaderboard(0, 1000);
           const entries = ensureArray(res);
 
           // Fetch full meme data for each leaderboard entry
@@ -185,7 +186,7 @@ export const useMarketplaceVoting = (
           const userProfiles = new Map();
 
           // Build normalized top list with filters: only show current, active, and with votes > 0
-          const top = valid
+          let top = valid
             .filter(({ meme, entry }) => {
               const isFinalized = meme?.finalized || meme?.meme_data?.finalized;
               const isWeekEnded = meme?.week_ended || meme?.meme_data?.week_ended;
@@ -208,6 +209,29 @@ export const useMarketplaceVoting = (
                 voteDetails: null,
               };
             });
+
+          // Ensure the just-voted meme is present with updated count even if not returned by backend
+          const votedIdStr = String(memeId);
+          const hasVotedMeme = top.some((m) => String(m.id) === votedIdStr);
+          if (!hasVotedMeme) {
+            try {
+              const votedDetail = await backendService.getMeme(Number(memeId));
+              if (votedDetail) {
+                const normalized = normalizeMeme(votedDetail, {}, userProfiles);
+                const likeCount = (Number.isFinite(currentVotes) ? currentVotes : 0) + 1;
+                top = [
+                  {
+                    ...normalized,
+                    votes: likeCount,
+                    likeCount,
+                    downvoteCount: 0,
+                    voteScore: likeCount,
+                  },
+                  ...top,
+                ];
+              }
+            } catch {}
+          }
 
           setTopMemes(top);
         } catch (err) {

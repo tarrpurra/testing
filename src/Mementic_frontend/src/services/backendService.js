@@ -4,6 +4,11 @@ import { Principal } from "@dfinity/principal";
 import { idlFactory } from "../../../declarations/mementic_backend";
 import { getAgentHost, getIdentityProvider, isDevMode, Id } from "../config/environment";
 
+// Disable noisy logs in production/runtime
+if (typeof console !== "undefined" && typeof console.log === "function") {
+  try { console.log = () => {}; } catch {}
+}
+
 /**
  * Backend Service for Mementic
  * Handles IC canister communication, authentication, and meme operations
@@ -318,6 +323,10 @@ class BackendService {
     return new Promise((resolve, reject) => {
       this.authClient.login({
         identityProvider: getIdentityProvider(),
+        // Ensure delegation includes the backend canister
+        delegationTargets: [Id],
+        // Set derivation origin to current site to align with agent host/origin
+        derivationOrigin: typeof window !== 'undefined' ? window.location.origin : undefined,
         maxTimeToLive: BigInt(30 * 24 * 60 * 60 * 1000 * 1000 * 1000), // 30 days
         windowOpenerFeatures: "toolbar=0,location=0,menubar=0,width=500,height=500,left=100,top=100",
         onSuccess: async () => {
@@ -559,6 +568,14 @@ class BackendService {
     }
     const result = await this._safeCall('get_current_leaderboard', offset, limit);
     return Array.isArray(result) ? result : [];
+  }
+
+  /**
+   * Get current weekly leaderboard with complete meme data (legacy function)
+   */
+  async getCurrentLeaderboardLegacy(limit = 10) {
+    const limitOpt = typeof limit === "number" ? [limit] : [];
+    return await this._safeCall('get_current_leaderboard_legacy', limitOpt);
   }
 
   /**

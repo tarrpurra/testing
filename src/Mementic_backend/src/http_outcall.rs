@@ -1133,15 +1133,76 @@ fn transform(args: TransformArgs) -> HttpResponse {
     r
 }
 
+/// Clear all memes from HTTP outcall storage (admin function)
+#[update]
+pub fn clear_all_memes() -> Result<u32, String> {
+    let user = caller();
+    if user == Principal::anonymous() {
+        return Err("Authentication required".to_string());
+    }
+
+    // Admin check - only admin can perform this operation
+    let admin = crate::nft_module::get_admin();
+    if user != admin {
+        return Err("Admin access required".to_string());
+    }
+
+    let mut cleared_count = 0;
+
+    // Clear USER_MEMES by removing each entry individually
+    USER_MEMES.with(|um| {
+        let mut map = um.borrow_mut();
+        let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            map.remove(&key);
+            cleared_count += 1;
+        }
+    });
+
+    // Clear UNIQUE_USERS by removing each entry individually
+    UNIQUE_USERS.with(|uu| {
+        let mut map = uu.borrow_mut();
+        let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            map.remove(&key);
+        }
+    });
+
+    // Clear RATE by removing each entry individually
+    RATE.with(|r| {
+        let mut map = r.borrow_mut();
+        let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            map.remove(&key);
+        }
+    });
+
+    // Clear MEME_COUNTER by removing each entry individually
+    MEME_COUNTER.with(|mc| {
+        let mut map = mc.borrow_mut();
+        let keys_to_remove: Vec<_> = map.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            map.remove(&key);
+        }
+    });
+
+    Ok(cleared_count)
+}
+
 /// Fetch bytes from a given image URL
 pub async fn fetch_image_bytes_from_image_storage(url: &str) -> Result<Vec<u8>, String> {
     let request: CanisterHttpRequestArgument = CanisterHttpRequestArgument {
         url: url.to_string(),
         method: HttpMethod::GET,
-        headers: vec![],
+        headers: vec![
+            HttpHeader { name: "User-Agent".into(), value: "mementic_canister".into() },
+            HttpHeader { name: "Accept".into(), value: "image/*".into() },
+        ],
         body: None,
-        max_response_bytes: None,
-        transform: None,
+        // Bound the response to a safe size; adjust if your images are larger
+        max_response_bytes: Some(2_000_000),
+        // Use the same transform to strip non-deterministic headers
+        transform: Some(TransformContext::from_name("transform".to_string(), vec![])),
     };
 
     // Perform the async call to management canister

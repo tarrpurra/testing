@@ -603,6 +603,38 @@ pub enum MintingMode {
     Collection { editions: u32 },
 }
 
+// Normalize meme image URLs so management canister http_request accepts them.
+// - Ensure https scheme for remote URLs
+// - Convert ipfs://<cid> to a public HTTPS gateway URL
+fn normalize_image_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("Empty image URL".into());
+    }
+
+    if trimmed.starts_with("https://") {
+        return Ok(trimmed.to_string());
+    }
+
+    // Allow localhost for local development
+    if trimmed.starts_with("http://127.0.0.1") || trimmed.starts_with("http://localhost") {
+        return Ok(trimmed.to_string());
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("ipfs://") {
+        // Basic CID/gateway mapping; consider making gateway configurable
+        let cid_path = rest.trim_start_matches('/');
+        return Ok(format!("https://ipfs.io/ipfs/{}", cid_path));
+    }
+
+    // Try to upgrade http -> https for non-local hosts
+    if let Some(rest) = trimmed.strip_prefix("http://") {
+        return Ok(format!("https://{}", rest));
+    }
+
+    Err("Url need to specify https scheme".into())
+}
+
 #[update]
 pub async fn mint_to(meme_id: u64, mode: MintingMode) -> Result<Vec<Nat>, String> {
     let caller = ic_cdk::caller();
@@ -652,13 +684,14 @@ pub async fn mint_to(meme_id: u64, mode: MintingMode) -> Result<Vec<Nat>, String
         crate::entitlements::require_active_entitlement(caller, meme_id, request_time)?;
 
     let image_url = stored_meme_data.meme_data.image_url.clone();
+    let fetch_url = normalize_image_url(&image_url)?;
     let image_format = stored_meme_data.meme_data.image_format.clone();
     let mime_type =
         guess_content_type(&image_format).unwrap_or_else(|| "application/octet-stream".into());
 
     let image_bytes = match STORED_IMAGES.with(|imgs| imgs.borrow().get(&meme_id)) {
         Some(blob) => blob.0.clone(),
-        None => match crate::http_outcall::fetch_image_bytes_from_image_storage(&image_url).await {
+        None => match crate::http_outcall::fetch_image_bytes_from_image_storage(&fetch_url).await {
             Ok(b) => b,
             Err(e) => {
                 return Err(format!(

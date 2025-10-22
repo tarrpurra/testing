@@ -160,12 +160,13 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
       return;
     }
 
-    if (clearedWeekId == null || clearedWeekId !== weekId) {
+    // Only clear if this is actually a different week (not just a refresh)
+    if (clearedWeekId !== null && clearedWeekId !== weekId) {
       setTopMemes([]);
       setMemes([]);
       setTotal(0);
-      setClearedWeekId(weekId);
     }
+    setClearedWeekId(weekId);
   }, [clearedWeekId, currentWeekStatus?.weekId, previousWeekId]);
 
   useEffect(() => {
@@ -182,21 +183,18 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
     }
   }, [clearedCompletionWeekId, currentWeekStatus, previousWeekId]);
 
-  // Auto-finalize when the countdown ends (testing: 10-minute weeks)
+  // Auto-finalize only when backend reports completion; avoid remainingNs<=0 heuristic
   useEffect(() => {
-    const { weekId, remainingNs, isCompleted } = currentWeekStatus ?? {};
+    const { weekId, isCompleted } = currentWeekStatus ?? {};
     if (weekId == null) return;
     if (finalizeAckWeekId === weekId) return; // already attempted for this week
-
-    const remainingMs = Number(remainingNs) / 1_000_000; // ns -> ms
-    const due = Number.isFinite(remainingMs) ? remainingMs <= 0 : Boolean(isCompleted);
-    if (!due && !isCompleted) return;
+    if (!isCompleted) return;
 
     let cancelled = false;
     (async () => {
       try {
         await backendService.ensureReady();
-        // Best-effort finalize; backend returns Option<week_id>
+        // Best-effort finalize; backend may no-op if already finalized
         await backendService.forceFinalizeCurrentWeek();
       } catch (e) {
         // Ignore errors; timer or permissions may handle rollover elsewhere
@@ -232,12 +230,6 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
 
   // Fetch Top 3
   useEffect(() => {
-    if (!isAuthenticated || !hasProfileName) {
-      setTopMemes([]);
-      setLoadingTop(false);
-      return () => undefined;
-    }
-
     let cancelled = false;
     (async () => {
       setLoadingTop((prev) => (topMemes.length === 0 ? true : prev));
@@ -322,18 +314,9 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
           };
         });
 
-        const filtered =
-          currentWeekId == null
-            ? arr
-            : arr.filter((meme) => {
-                const week = deriveWeekIdFromMs(meme?.created_at);
-                // Only include memes from the current week
-                // Exclude all memes from previous weeks (not just the immediate previous one)
-                return week === currentWeekId;
-              });
-
+        // Trust backend current leaderboard snapshot; only remove invalid entries locally
         // Filter out finalized, week-ended memes, and memes with 0 votes from leaderboard
-        const cleanedFiltered = filtered.filter((meme) => {
+        const cleanedFiltered = arr.filter((meme) => {
           const isFinalized = Boolean(meme?.finalized);
           const isWeekEnded = Boolean(meme?.week_ended);
           const hasVotes = (meme?.votes ?? 0) > 0;
@@ -353,7 +336,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
     return () => {
       cancelled = true;
     };
-  }, [hasProfileName, isAuthenticated, currentWeekId]);
+  }, [currentWeekId]);
 
   // Fetch paginated list
   const fetchList = async ({ reset = false } = {}) => {

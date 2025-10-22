@@ -50,7 +50,7 @@ pub use http_outcall::{
 };
 
 pub use voting::{
-    finalize_finished_weeks, finalize_week, get_completed_weeks, get_current_week_status,
+    finalize_finished_weeks, finalize_week, get_completed_weeks, get_current_week_id, get_current_week_status,
     get_meme_votes, get_top3_for_week, get_top_liked_memes, get_user_vote, get_voting_stats,
     get_week_leaderboard, remove_vote, vote_meme, vote_with_power, LeaderboardEntry,
     LegacyTopEntry, LegacyWeeklyLeaderboard, MemeVotes, TopLikedLeaderboard, UserPower, VoteRecord,
@@ -164,6 +164,98 @@ pub fn get_lifetime_votes() -> u64 {
 #[query]
 pub fn get_current_week_meme_count() -> u64 {
     voting::get_current_week_meme_count()
+}
+
+/// Comprehensive system reset - clears all data and resets to week 1
+/// WARNING: This will delete ALL memes, votes, leaderboards, and reset the system
+#[update]
+pub fn reset_system_to_week_1() -> Result<String, String> {
+    // Clear all storage by removing each entry individually
+    crate::state::MEMES.with(|memes| {
+        let mut memes_mut = memes.borrow_mut();
+        let keys_to_remove: Vec<_> = memes_mut.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            memes_mut.remove(&key);
+        }
+    });
+
+    crate::state::MEMES_BY_WEEK.with(|memes_by_week| {
+        let mut memes_by_week_mut = memes_by_week.borrow_mut();
+        let keys_to_remove: Vec<_> = memes_by_week_mut.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            memes_by_week_mut.remove(&key);
+        }
+    });
+
+    // Clear voting data
+    crate::voting::VOTES.with(|votes| {
+        let mut votes_mut = votes.borrow_mut();
+        let keys_to_remove: Vec<_> = votes_mut.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            votes_mut.remove(&key);
+        }
+    });
+
+    crate::voting::USER_VOTES.with(|user_votes| {
+        let mut user_votes_mut = user_votes.borrow_mut();
+        let keys_to_remove: Vec<_> = user_votes_mut.iter().map(|entry| entry.key().clone()).collect();
+        for key in keys_to_remove {
+            user_votes_mut.remove(&key);
+        }
+    });
+
+    crate::state::LIVE_VOTES.with(|live_votes| {
+        let mut live_votes_mut = live_votes.borrow_mut();
+        let keys_to_remove: Vec<_> = live_votes_mut.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            live_votes_mut.remove(&key);
+        }
+    });
+
+    crate::voting::WEEKLY_PERIODS.with(|periods| {
+        let mut periods_mut = periods.borrow_mut();
+        let keys_to_remove: Vec<_> = periods_mut.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            periods_mut.remove(&key);
+        }
+    });
+
+    crate::state::FINALIZED_LEADERBOARDS.with(|leaderboards| {
+        let mut leaderboards_mut = leaderboards.borrow_mut();
+        let keys_to_remove: Vec<_> = leaderboards_mut.iter().map(|entry| *entry.key()).collect();
+        for key in keys_to_remove {
+            leaderboards_mut.remove(&key);
+        }
+    });
+
+    // Clear HTTP outcall memes if they exist
+    if let Ok(cleared_count) = crate::http_outcall::clear_all_memes() {
+        ic_cdk::println!("Cleared {} HTTP outcall memes", cleared_count);
+    }
+
+    // Reset counters
+    crate::state::set_active_week_id(1);
+    crate::state::set_next_meme_id(1);
+    crate::state::set_week_offset(0);
+
+    // Create the first week period
+    let now = crate::time::now_secs();
+    let week_start = now; // Start immediately
+    let week_end = week_start + (crate::time::WEEK_SECONDS);
+    let first_period = crate::voting::WeeklyPeriod {
+        week_id: 1,
+        start_time: week_start,
+        end_time: week_end,
+        is_completed: false,
+        meme_count: 0,
+    };
+
+    crate::voting::WEEKLY_PERIODS.with(|periods| {
+        periods.borrow_mut().insert(1, first_period);
+    });
+
+    ic_cdk::println!("System reset complete - starting from week 1");
+    Ok("System reset to week 1 complete. All data cleared, counters reset.".to_string())
 }
 
 #[post_upgrade]
