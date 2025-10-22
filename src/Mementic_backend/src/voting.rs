@@ -253,9 +253,31 @@ impl Storable for UserPower {
 
 // ---------- Helpers ----------
 
-const WEEK_S: u64 = 600; // 10 minutes for testing (600 seconds = 10 minutes)
+const WEEK_S: u64 = crate::time::WEEK_SECONDS; // 7 days expressed in seconds
 const WEEKLY_POWER_CAP: u32 = 100;
 const DEFAULT_VOTE_COST: u32 = 10;
+
+/// Normalize a timestamp coming from various sources (seconds, milliseconds,
+/// microseconds, nanoseconds) into nanoseconds.
+fn normalize_timestamp_ns(value: u64) -> u64 {
+    const NS_THRESHOLD: u64 = 1_000_000_000_000_000_000; // 1e18
+    const US_THRESHOLD: u64 = 1_000_000_000_000_000; // 1e15
+    const MS_THRESHOLD: u64 = 1_000_000_000_000; // 1e12
+
+    if value == 0 {
+        return 0;
+    }
+
+    if value >= NS_THRESHOLD {
+        value
+    } else if value >= US_THRESHOLD {
+        value.saturating_mul(1_000)
+    } else if value >= MS_THRESHOLD {
+        value.saturating_mul(1_000_000)
+    } else {
+        value.saturating_mul(1_000_000_000)
+    }
+}
 
 /// Week index (0-based) from timestamp ns
 fn get_week_id(timestamp_ns: u64) -> u64 {
@@ -461,7 +483,8 @@ fn perform_vote(
         return Err("Cannot vote on your own meme".into());
     }
 
-    let meme_week = get_week_id(meme.created_at);
+    let meme_created_ns = normalize_timestamp_ns(meme.created_at);
+    let meme_week = get_week_id(meme_created_ns);
     let period = get_or_create_current_week();
     let current_week = period.week_id;
 
@@ -516,7 +539,7 @@ fn perform_vote(
             VoteType::Downvote => mv.downvotes = mv.downvotes.saturating_add(1),
         }
 
-        let age_hours = (now - meme.created_at) as f64 / 1_000_000_000.0 / 3600.0;
+        let age_hours = (now.saturating_sub(meme_created_ns)) as f64 / 1_000_000_000.0 / 3600.0;
         mv.score = calculate_score(mv.upvotes, mv.downvotes, age_hours);
         mv.last_vote_time = now;
 
@@ -587,7 +610,8 @@ pub fn remove_vote(meme_id: u64) -> Result<VoteResponse, String> {
         return Err("Cannot remove votes from your own meme".into());
     }
 
-    let meme_week = get_week_id(meme.created_at);
+    let meme_created_ns = normalize_timestamp_ns(meme.created_at);
+    let meme_week = get_week_id(meme_created_ns);
     let period = get_or_create_current_week();
     if meme_week != period.week_id {
         return Err("Can only remove votes from the current week".into());
@@ -616,7 +640,7 @@ pub fn remove_vote(meme_id: u64) -> Result<VoteResponse, String> {
             }
             mv.total_voters = mv.total_voters.saturating_sub(1);
 
-            let age_hours = (now - meme.created_at) as f64 / 1_000_000_000.0 / 3600.0;
+            let age_hours = (now.saturating_sub(meme_created_ns)) as f64 / 1_000_000_000.0 / 3600.0;
             mv.score = calculate_score(mv.upvotes, mv.downvotes, age_hours);
             mv.last_vote_time = now;
 

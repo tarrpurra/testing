@@ -1,7 +1,8 @@
 use crate::model::WeekId;
 use crate::state;
 
-pub const WEEK_SECONDS: u64 = 600;
+/// Number of seconds in a full calendar week (7 days).
+pub const WEEK_SECONDS: u64 = 7 * 24 * 60 * 60; // 604,800 seconds
 
 fn adjust_with_offset(seconds: u64, offset: i64) -> u64 {
     if offset >= 0 {

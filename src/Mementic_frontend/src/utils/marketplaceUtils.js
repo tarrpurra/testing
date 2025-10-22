@@ -68,12 +68,101 @@ export const formatIcp = (value) => {
   return n.toFixed(4);
 };
 
-export const WEEK_IN_MS = 10 * 60 * 1000; // 10 minutes for testing
+// Number of milliseconds in a full calendar week (7 days)
+export const WEEK_IN_MS = 7 * 24 * 60 * 60 * 1000; // 604,800,000 ms
 
 export const deriveWeekIdFromMs = (ms) => {
   const value = Number(ms);
   if (!Number.isFinite(value) || value <= 0) return null;
   return Math.floor(value / WEEK_IN_MS);
+};
+
+const LEADERBOARD_STORAGE_KEY = "mementic::premarket::leaderboard";
+const LEADERBOARD_CACHE_MAX_AGE_MS = WEEK_IN_MS * 2;
+
+const getLocalStorageSafe = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const sanitizeLeaderboardForStorage = (memes) =>
+  ensureArray(memes)
+    .map((meme) => {
+      if (!meme || typeof meme !== "object") return null;
+      const { __raw, ...rest } = meme;
+      return stripBigInts(rest);
+    })
+    .filter(Boolean);
+
+export const loadLeaderboardCache = () => {
+  const storage = getLocalStorageSafe();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(LEADERBOARD_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const numericWeekId = Number(parsed?.weekId);
+    if (!Number.isFinite(numericWeekId)) {
+      storage.removeItem(LEADERBOARD_STORAGE_KEY);
+      return null;
+    }
+    const timestamp = Number(parsed?.timestamp) || 0;
+    const now = Date.now();
+    if (timestamp && now - timestamp > LEADERBOARD_CACHE_MAX_AGE_MS) {
+      storage.removeItem(LEADERBOARD_STORAGE_KEY);
+      return null;
+    }
+    const currentWeek = deriveWeekIdFromMs(now);
+    if (currentWeek != null && numericWeekId !== currentWeek) {
+      storage.removeItem(LEADERBOARD_STORAGE_KEY);
+      return null;
+    }
+    const memes = ensureArray(parsed?.memes).filter(
+      (entry) => entry && typeof entry === "object"
+    );
+    return {
+      weekId: numericWeekId,
+      memes,
+      timestamp,
+    };
+  } catch {
+    try {
+      storage.removeItem(LEADERBOARD_STORAGE_KEY);
+    } catch {}
+    return null;
+  }
+};
+
+export const persistLeaderboardCache = (weekId, memes) => {
+  const storage = getLocalStorageSafe();
+  const numericWeekId = Number(weekId);
+  if (!storage || !Number.isFinite(numericWeekId) || numericWeekId < 0) {
+    return null;
+  }
+  const sanitizedMemes = sanitizeLeaderboardForStorage(memes);
+  const payload = {
+    weekId: numericWeekId,
+    memes: sanitizedMemes,
+    timestamp: Date.now(),
+  };
+  try {
+    storage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Swallow storage errors (quota, serialization). We still return the payload.
+  }
+  return payload;
+};
+
+export const clearLeaderboardCache = () => {
+  const storage = getLocalStorageSafe();
+  if (!storage) return;
+  try {
+    storage.removeItem(LEADERBOARD_STORAGE_KEY);
+  } catch {}
 };
 
 export const normalizeMeme = (m, extra = {}, userProfiles = new Map()) => {
@@ -136,11 +225,60 @@ export const normalizeMeme = (m, extra = {}, userProfiles = new Map()) => {
   };
 
   // Handle different vote structures
+  const extractExtraVotes = (which, rawValue = extra?.votes) => {
+    const value = rawValue;
+    if (value == null) return undefined;
+
+    // When callers pass a structured object we honour the explicit fields
+    if (Array.isArray(value)) {
+      // Optional-like container from Candid. Use the first non-null entry.
+      if (value.length > 0) {
+        return extractExtraVotes(which, value[0]);
+      }
+      return undefined;
+    }
+
+    if (typeof value === "object") {
+      if (which === "up" && value.upvotes != null) return value.upvotes;
+      if (which === "down" && value.downvotes != null) return value.downvotes;
+    }
+
+    // Some callers (e.g. leaderboard helpers) pass the raw vote total as a
+    // number/bigint. Treat that as the upvote count with no downvotes.
+    if (
+      which === "up" &&
+      (typeof value === "number" || typeof value === "bigint")
+    ) {
+      return value;
+    }
+
+    if (typeof value === "string" && value.trim() !== "") {
+      const trimmed = value.trim();
+      if (/^-?\d+n$/.test(trimmed)) {
+        try {
+          return BigInt(trimmed.slice(0, -1));
+        } catch {
+          return undefined;
+        }
+      }
+
+      const parsed = Number(trimmed);
+      if (Number.isFinite(parsed)) return parsed;
+      try {
+        return BigInt(trimmed);
+      } catch {
+        return undefined;
+      }
+    }
+
+    return undefined;
+  };
+
   const up = safeBigIntToNumber(
-    extra?.votes?.upvotes ?? md?.upvotes ?? m?.upvotes ?? m?.votes ?? 0
+    extractExtraVotes("up") ?? md?.upvotes ?? m?.upvotes ?? m?.votes ?? 0
   );
   const down = safeBigIntToNumber(
-    extra?.votes?.downvotes ?? md?.downvotes ?? m?.downvotes ?? 0
+    extractExtraVotes("down") ?? md?.downvotes ?? m?.downvotes ?? 0
   );
   const score = safeBigIntToNumber(m?.votes ?? m?.score ?? up - down);
 
