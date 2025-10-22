@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import backendService from "../services/backendService";
 import {
   ensureArray,
@@ -7,17 +7,29 @@ import {
   normalizeMeme,
   deriveWeekIdFromMs,
   PAGE_SIZE,
+  loadLeaderboardCache,
+  persistLeaderboardCache,
+  clearLeaderboardCache,
 } from "../utils/marketplaceUtils";
 
 export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, searchQuery) => {
-  const [topMemes, setTopMemes] = useState([]);
+  const leaderboardCacheRef = useRef(loadLeaderboardCache());
+  const cachedLeaderboard = leaderboardCacheRef.current;
+  const cachedWeekId = Number.isFinite(Number(cachedLeaderboard?.weekId))
+    ? Number(cachedLeaderboard.weekId)
+    : null;
+  const cachedTopMemes = Array.isArray(cachedLeaderboard?.memes)
+    ? cachedLeaderboard.memes
+    : [];
+
+  const [topMemes, setTopMemesState] = useState(cachedTopMemes);
   const [memes, setMemes] = useState([]);
   const [total, setTotal] = useState(0);
-  const [loadingTop, setLoadingTop] = useState(true);
+  const [loadingTop, setLoadingTop] = useState(cachedTopMemes.length === 0);
   const [loadingList, setLoadingList] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [marketplaceCount, setMarketplaceCount] = useState(0);
-  const [leaderboardCount, setLeaderboardCount] = useState(0);
+  const [leaderboardCount, setLeaderboardCount] = useState(cachedTopMemes.length);
   const defaultWeekStatus = useMemo(
     () => ({ weekId: null, remainingNs: 0, endTimeNs: 0, isCompleted: false }),
     []
@@ -25,9 +37,39 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
   const [currentWeekStatus, setCurrentWeekStatus] = useState(defaultWeekStatus);
   const [currentWeekId, setCurrentWeekId] = useState(null);
   const [previousWeekId, setPreviousWeekId] = useState(null);
-  const [clearedWeekId, setClearedWeekId] = useState(null);
+  const [clearedWeekId, setClearedWeekId] = useState(cachedWeekId);
   const [clearedCompletionWeekId, setClearedCompletionWeekId] = useState(null);
   const [finalizeAckWeekId, setFinalizeAckWeekId] = useState(null);
+
+  const setTopMemes = (value) => {
+    setTopMemesState((prev) => {
+      const next = typeof value === "function" ? value(prev) : value;
+      const arr = Array.isArray(next) ? next : ensureArray(next);
+      const filtered = arr.filter(Boolean);
+      setLeaderboardCount(filtered.length);
+
+      const activeWeekIdCandidate = (() => {
+        const statusWeek = Number(currentWeekStatus?.weekId);
+        if (Number.isFinite(statusWeek)) return statusWeek;
+        if (Number.isFinite(Number(currentWeekId))) return Number(currentWeekId);
+        const cachedWeek = Number(leaderboardCacheRef.current?.weekId);
+        if (Number.isFinite(cachedWeek)) return cachedWeek;
+        return null;
+      })();
+
+      if (activeWeekIdCandidate != null) {
+        const payload = persistLeaderboardCache(activeWeekIdCandidate, filtered);
+        if (payload) {
+          leaderboardCacheRef.current = payload;
+        }
+      } else if (filtered.length === 0) {
+        clearLeaderboardCache();
+        leaderboardCacheRef.current = null;
+      }
+
+      return filtered;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +138,6 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
     const weekId = currentWeekStatus?.weekId;
     if (weekId == null) {
       setMarketplaceCount(0);
-      setLeaderboardCount(0);
       return;
     }
     let cancelled = false;
@@ -199,7 +240,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
 
     let cancelled = false;
     (async () => {
-      setLoadingTop(true);
+      setLoadingTop((prev) => (topMemes.length === 0 ? true : prev));
       setErrorMsg("");
       try {
         const leaderboard = await backendService.getCurrentLeaderboard(0, 1000);

@@ -19,8 +19,9 @@ pub fn start_rollover_timer() {
         if let Some(id) = cell.borrow_mut().take() {
             clear_timer(id);
         }
-        // Check every 60 seconds for testing (was 3600 for production)
-        let id = set_timer_interval(Duration::from_secs(60), || {
+        // Check periodically (once per hour) to detect week rollovers promptly.
+        let interval_secs = (crate::time::WEEK_SECONDS / 168).max(1); // 168 hours per week
+        let id = set_timer_interval(Duration::from_secs(interval_secs), || {
             maybe_perform_rollover(DEFAULT_TOP_N);
         });
         cell.borrow_mut().replace(id);
