@@ -94,7 +94,6 @@ const PreMarketplace = () => {
   const weekCompleted = Boolean(currentWeekStatus?.isCompleted) &&
     Number(currentWeekStatus?.remainingNs || 0) <= 0;
   console.log('PreMarketplace: currentWeekStatus =', currentWeekStatus, 'weekCompleted =', weekCompleted);
-  const activeMemes = memes;
 
   const {
     handleVote,
@@ -110,7 +109,7 @@ const PreMarketplace = () => {
 
   // Filter memes based on search query and creator
   const filteredMemes = useMemo(() => {
-    let list = activeMemes;
+    let list = memes;
     if (selectedCreator !== "all") {
       list = list.filter((meme) => meme.creator === selectedCreator);
     }
@@ -122,39 +121,39 @@ const PreMarketplace = () => {
         (meme.caption?.toLowerCase() ?? "").includes(query) ||
         (meme.prompt?.toLowerCase() ?? "").includes(query)
     );
-  }, [activeMemes, searchQuery, selectedCreator]);
+  }, [memes, searchQuery, selectedCreator]);
 
   // Computed stats
   const totalVotes = useMemo(
-    () => activeMemes.reduce((acc, meme) => acc + (meme?.votes || 0), 0),
-    [activeMemes]
+    () => memes.reduce((acc, meme) => acc + (meme?.votes || 0), 0),
+    [memes]
   );
 
   const totalViews = useMemo(
-    () => activeMemes.reduce((acc, meme) => acc + (meme?.views || 0), 0),
-    [activeMemes]
+    () => memes.reduce((acc, meme) => acc + (meme?.views || 0), 0),
+    [memes]
   );
 
   const listedCount = useMemo(
     () =>
-      activeMemes.filter((meme) => {
+      memes.filter((meme) => {
         const sale = meme?.sale_metadata ?? meme?.market_data;
         return sale?.is_listed;
       }).length,
-    [activeMemes]
+    [memes]
   );
 
   const uniqueCreators = useMemo(() => {
     const creators = new Set();
-    activeMemes.forEach((meme) => {
+    memes.forEach((meme) => {
       if (meme?.creator) creators.add(meme.creator);
     });
     return creators.size;
-  }, [activeMemes]);
+  }, [memes]);
 
   const creatorStats = useMemo(() => {
     const stats = new Map();
-    activeMemes.forEach((meme) => {
+    memes.forEach((meme) => {
       const creator = meme?.creator || "Anonymous";
       if (!stats.has(creator)) {
         stats.set(creator, { creator, count: 0, votes: 0 });
@@ -168,7 +167,7 @@ const PreMarketplace = () => {
         b.votes !== a.votes ? b.votes - a.votes : b.count - a.count
       )
       .slice(0, 6);
-  }, [activeMemes]);
+  }, [memes]);
 
   const topTrending = useMemo(
     () => topMemes.filter(Boolean).slice(0, 3),
@@ -193,7 +192,7 @@ const PreMarketplace = () => {
         value: "newest",
         label: "Newest",
         icon: "Sparkles",
-        meta: `${activeMemes.length} drops`,
+        meta: `${memes.length} drops`,
       },
       {
         value: "top",
@@ -208,7 +207,7 @@ const PreMarketplace = () => {
         meta: `${listedCount} live`,
       },
     ],
-    [activeMemes.length, listedCount, totalViews, totalVotes]
+    [memes.length, listedCount, totalViews, totalVotes]
   );
 
   const selectedCreatorLabel =
@@ -243,29 +242,6 @@ const PreMarketplace = () => {
       });
     }
   }, [authLoading, safeHasProfileName, safeIsAuthenticated, location.pathname, navigate, toast]);
-
-  // Add a console command for admin reset
-  useEffect(() => {
-    // Make reset function available in console for admin use
-    if (typeof window !== 'undefined') {
-      window.resetMementicSystem = async () => {
-        try {
-          console.log("Calling system reset...");
-          const result = await backendService.resetSystemToWeek1();
-          console.log("Reset result:", result);
-          // Clear the cache to force refresh
-          localStorage.removeItem('mementic::premarket::leaderboard');
-          // Refresh the page to reload all data
-          window.location.reload();
-          return result;
-        } catch (error) {
-          console.error("Reset failed:", error);
-          throw error;
-        }
-      };
-      console.log("Admin command available: run resetMementicSystem() in console");
-    }
-  }, []);
 
   // Preview Modal State
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -306,7 +282,7 @@ const PreMarketplace = () => {
       <Navigation />
 
       <div className="w-screen flex flex-col gap-10 px-4 py-10 lg:px-6">
-        <main className="w-full w- max-w-[200rem] space-y-6">
+        <main className="w-full max-w-[200rem] space-y-6">
           {/* Voting power badge */}
           <div className="flex items-center justify-between">
             <div className="text-xs text-muted-foreground">
@@ -341,7 +317,7 @@ const PreMarketplace = () => {
           />
 
           <MarketplaceFeed
-            memes={activeMemes}
+            memes={memes}
             filteredMemes={filteredMemes}
             loadingList={loadingList}
             errorMsg={errorMsg}
@@ -359,7 +335,7 @@ const PreMarketplace = () => {
             currentUserPrincipal={principal}
             onOpenPreview={openPreview}
             setSelectedCreator={setSelectedCreator}
-            onClearFilters={() => setSearchInput("")}
+            onClearFilters={() => { setSearchInput(""); setSelectedCreator("all"); setSort("trending"); }}
             isClearing={weekCompleted}
           />
         </main>

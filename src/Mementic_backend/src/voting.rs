@@ -942,7 +942,8 @@ pub fn get_current_week_status() -> (u64, u64, u64, bool) {
     // Ensure there's always an active week
     ensure_active_week();
 
-    let period = get_or_create_current_week();
+    let active_week_id = crate::state::get_active_week_id();
+    let period = WEEKLY_PERIODS.with(|wp| wp.borrow().get(&active_week_id)).unwrap_or_else(|| get_or_create_current_week());
     let remaining = if now < period.end_time {
         period.end_time - now
     } else {
@@ -981,6 +982,7 @@ fn ensure_active_week() {
         // Check if current week exists and is active
         if let Some(period) = periods.get(&current_week_id) {
             if !period.is_completed && now <= period.end_time {
+                crate::state::set_active_week_id(current_week_id);
                 return; // Current week is active, nothing to do
             }
         }
@@ -994,6 +996,7 @@ fn ensure_active_week() {
                 let mut active_period = next_period;
                 active_period.is_completed = false;
                 periods.insert(next_week_id, active_period);
+                crate::state::set_active_week_id(next_week_id);
             }
         } else {
             // Create the next week
@@ -1007,6 +1010,7 @@ fn ensure_active_week() {
                 meme_count: 0,
             };
             periods.insert(next_week_id, new_period);
+            crate::state::set_active_week_id(next_week_id);
 
             ic_cdk::println!("Created new active week: {}", next_week_id);
         }

@@ -24,6 +24,10 @@ export const useMarketplaceVoting = (
     refresh,
   } = votingControls || {};
 
+  const votingLock = useRef(false);
+
+  const { toast } = useToast();
+
   const checkMemeOwnership = (meme, principal) => {
     if (!principal || !meme) return false;
 
