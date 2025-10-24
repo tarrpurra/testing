@@ -263,22 +263,41 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
         return;
       }
 
-      const resolved = entries.map((entry) => {
-        if (entry.meme_data) {
-          return { entry, meme: entry.meme_data };
-        }
-        return null;
-      }).filter(Boolean);
+      let resolved = [];
+      const entriesWithMemeData = entries.filter((entry) => Boolean(entry?.meme_data));
 
-      const valid = resolved.filter(Boolean);
-      if (valid.length === 0) {
+      if (entriesWithMemeData.length > 0) {
+        resolved = entriesWithMemeData.map((entry) => ({ entry, meme: entry.meme_data }));
+      } else {
+        const fetched = await Promise.all(
+          entries.map(async (entry) => {
+            const rawId = Array.isArray(entry?.meme_id) ? entry.meme_id[0] : entry?.meme_id;
+            const memeIdNum = safeBigIntToNumber(rawId);
+            if (!Number.isFinite(memeIdNum) || memeIdNum <= 0) {
+              return null;
+            }
+
+            try {
+              const meme = await backendService.getMeme(memeIdNum);
+              return meme ? { entry, meme } : null;
+            } catch (error) {
+              console.warn(`Failed to fetch meme ${memeIdNum} for leaderboard:`, error);
+              return null;
+            }
+          })
+        );
+
+        resolved = fetched.filter(Boolean);
+      }
+
+      if (resolved.length === 0) {
         setTopMemes([]);
         return;
       }
 
       const uniqueOwners = [
         ...new Set(
-          valid
+          resolved
             .map(({ meme }) => {
               const owner = meme?.owner ?? meme?.meme_data?.owner ?? meme?.creator;
               if (owner) {
@@ -304,7 +323,7 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
         }
       }
 
-      const arr = valid.map(({ entry, meme }) => {
+      const arr = resolved.map(({ entry, meme }) => {
         const upvotes = safeBigIntToNumber(entry?.votes ?? entry?.upvotes ?? entry?.votes?.upvotes ?? 0);
         const downvotes = safeBigIntToNumber(entry?.downvotes ?? entry?.votes?.downvotes ?? 0);
         const normalized = normalizeMeme(

@@ -1,11 +1,15 @@
-use crate::index::week_meme_ids;
 use crate::model::{MemeId, Timestamp, TopEntry, WeekId, WeeklyLeaderboard};
 use crate::state::{get_active_week_id, FINALIZED_LEADERBOARDS, LIVE_VOTES};
+use crate::voting::VOTES;
 
 pub const DEFAULT_TOP_N: usize = 50;
 
-fn sort_entries(entries: &mut Vec<(MemeId, u64)>) {
-    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+fn sort_entries(entries: &mut Vec<(MemeId, u64, Timestamp)>) {
+    entries.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| b.2.cmp(&a.2))
+            .then_with(|| a.0.cmp(&b.0))
+    });
 }
 
 pub fn apply_vote(meme_id: MemeId, up: bool) -> u64 {
@@ -51,11 +55,26 @@ pub fn clear_live_votes() {
     });
 }
 
-fn live_vote_entries_for_week(week_id: WeekId) -> Vec<(MemeId, u64)> {
-    let mut entries: Vec<(MemeId, u64)> = week_meme_ids(week_id)
-        .into_iter()
-        .map(|meme_id| (meme_id, get_vote_count(meme_id)))
-        .collect();
+fn live_vote_entries_for_week(week_id: WeekId) -> Vec<(MemeId, u64, Timestamp)> {
+    let mut entries: Vec<(MemeId, u64, Timestamp)> = VOTES.with(|votes| {
+        votes
+            .borrow()
+            .iter()
+            .filter_map(|entry| {
+                let mv = entry.value();
+                if mv.created_week != week_id {
+                    return None;
+                }
+
+                let net_votes = mv.upvotes.saturating_sub(mv.downvotes) as u64;
+                if net_votes == 0 {
+                    return None;
+                }
+
+                Some((*entry.key(), net_votes, mv.last_vote_time))
+            })
+            .collect()
+    });
 
     sort_entries(&mut entries);
     entries
@@ -63,7 +82,7 @@ fn live_vote_entries_for_week(week_id: WeekId) -> Vec<(MemeId, u64)> {
 
 pub fn current_leaderboard(offset: u32, limit: u32) -> Vec<TopEntry> {
     let week_id = get_active_week_id();
-    let mut entries = live_vote_entries_for_week(week_id);
+    let entries = live_vote_entries_for_week(week_id);
     let start = offset as usize;
     let end = (start + limit as usize).min(entries.len());
     if start >= entries.len() {
@@ -72,7 +91,7 @@ pub fn current_leaderboard(offset: u32, limit: u32) -> Vec<TopEntry> {
     entries[start..end]
         .iter()
         .enumerate()
-        .map(|(idx, (meme_id, votes))| TopEntry {
+        .map(|(idx, (meme_id, votes, _last_vote_time))| TopEntry {
             meme_id: *meme_id,
             votes: *votes,
             rank: (start + idx + 1) as u32,
@@ -91,7 +110,7 @@ pub fn snapshot_weekly_leaderboard(
     let top = entries
         .iter()
         .enumerate()
-        .map(|(idx, (meme_id, votes))| TopEntry {
+        .map(|(idx, (meme_id, votes, _last_vote_time))| TopEntry {
             meme_id: *meme_id,
             votes: *votes,
             rank: (idx + 1) as u32,
