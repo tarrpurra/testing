@@ -52,110 +52,93 @@ const WeeklyLeaderboard = ({ timeLeft, onPreview, isWeekCompleted = false, exter
     // Always fetch from backend regardless of week completion status
     const fetchTopMemes = async () => {
       try {
-        // Use the legacy function that returns complete meme data
-        const res = await backendService.getCurrentLeaderboardLegacy(3);
-        console.log('Legacy leaderboard raw data:', res);
+        await backendService.ensureReady();
+        // Use getTopLikedMemes for reliable vote-based sorting
+        const leaderboard = await backendService.getTopLikedMemes(3);
+        const entries = ensureArray(leaderboard?.top_memes);
 
-        // The legacy function returns a LegacyWeeklyLeaderboard structure
-        if (res && res.top_memes) {
-          const entries = res.top_memes;
-          console.log('Legacy leaderboard entries count:', entries.length);
-
-          // Legacy format already includes complete meme data
-          const resolved = entries.map((entry) => {
-            if (entry.meme_data) {
-              // Fetch user profile for the meme owner
-              const owner = entry.meme_data.owner;
-              const principal = owner
-                ? (typeof owner === "string" ? owner : owner.toText())
-                : null;
-
-              return {
-                entry,
-                meme: entry.meme_data
-              };
-            }
-            return null;
-          }).filter(Boolean);
-
-          console.log('Valid memes from legacy:', resolved.length);
-
-          if (resolved.length === 0) {
-            console.log('No valid memes found in legacy response');
-            if (!cancelled) setTopMemes([]);
-            return;
-          }
-
-          // Get unique owners for profile fetching
-          const uniqueOwners = [...new Set(resolved.map(({ meme }) => {
-            const owner = meme?.owner;
-            if (owner) {
-              if (typeof owner === "string") return owner;
-              if (typeof owner === "object" && owner.toText) return owner.toText();
-              return String(owner);
-            }
-            return null;
-          }).filter(Boolean))];
-
-          // Fetch user profiles for leaderboard owners
-          const userProfiles = new Map();
-          for (const principal of uniqueOwners) {
-            try {
-              const profile = await backendService.getUserProfileByPrincipal(principal);
-              if (profile) {
-                userProfiles.set(principal, profile);
-              }
-            } catch (error) {
-              console.warn(`Failed to fetch profile for ${principal}:`, error);
-            }
-          }
-
-          const arr = resolved
-            .filter(({ meme, entry }) => {
-              // Show all memes from backend, regardless of finalized/week_ended status
-              // The backend should handle filtering appropriately
-              const shouldInclude = true; // Always include
-              console.log(`Meme ${meme?.id}: include=${shouldInclude}`);
-              return shouldInclude;
-            })
-            .map(({ entry, meme }) => {
-              // Normalize the meme data from legacy format
-              const normalized = normalizeMeme(
-                meme,
-                { rank: entry?.rank, votes: entry?.votes?.upvotes || 0 },
-                userProfiles
-              );
-
-              const likeCount = entry?.votes?.upvotes || 0;
-              const downvoteCount = entry?.votes?.downvotes || 0;
-
-              const result = {
-                ...normalized,
-                votes: likeCount,
-                likeCount,
-                downvoteCount,
-                voteScore: likeCount,
-                voteDetails: { upvotes: likeCount, downvotes: downvoteCount },
-              };
-
-              console.log('Normalized meme from legacy:', result);
-              return result;
-            });
-
-          if (!cancelled) {
-            console.log('Setting top memes from legacy:', arr);
-            setTopMemes(arr);
-            // Update parent component's topMemes state if callback provided
-            if (onTopMemesUpdate) {
-              onTopMemesUpdate(arr);
-            }
-          }
-        } else {
-          console.log('Legacy response missing top_memes:', res);
+        if (entries.length === 0) {
           if (!cancelled) setTopMemes([]);
+          return;
+        }
+
+        const resolved = entries.map((entry) => {
+          if (entry.meme_data) {
+            return { entry, meme: entry.meme_data };
+          }
+          return null;
+        }).filter(Boolean);
+
+        const valid = resolved.filter(Boolean);
+        if (valid.length === 0) {
+          if (!cancelled) setTopMemes([]);
+          return;
+        }
+
+        const uniqueOwners = [
+          ...new Set(
+            valid
+              .map(({ meme }) => {
+                const owner = meme?.owner ?? meme?.meme_data?.owner ?? meme?.creator;
+                if (owner) {
+                  if (typeof owner === "string") return owner;
+                  if (typeof owner === "object" && owner.toText) return owner.toText();
+                  return String(owner);
+                }
+                return null;
+              })
+              .filter(Boolean)
+          ),
+        ];
+
+        const userProfiles = new Map();
+        for (const principal of uniqueOwners) {
+          try {
+            const profile = await backendService.getUserProfileByPrincipal(principal);
+            if (profile) {
+              userProfiles.set(principal, profile);
+            }
+          } catch (error) {
+            console.warn(`Failed to fetch profile for ${principal}:`, error);
+          }
+        }
+
+        const arr = valid.map(({ entry, meme }) => {
+          const upvotes = safeBigIntToNumber(entry?.votes ?? entry?.upvotes ?? 0);
+          const downvotes = safeBigIntToNumber(entry?.downvotes ?? 0);
+          const normalized = normalizeMeme(
+            meme,
+            { rank: entry?.rank, votes: { upvotes, downvotes } },
+            userProfiles
+          );
+
+          return {
+            ...normalized,
+            votes: upvotes - downvotes,
+            likeCount: upvotes,
+            downvoteCount: downvotes,
+            voteScore: upvotes - downvotes,
+            voteDetails: { upvotes, downvotes },
+          };
+        });
+
+        // Filter out invalid entries
+        const cleanedFiltered = arr.filter((meme) => {
+          const isFinalized = Boolean(meme?.finalized);
+          const isWeekEnded = Boolean(meme?.week_ended);
+          const hasVotes = (meme?.voteDetails?.upvotes || 0) > 0;
+          return !isFinalized && !isWeekEnded && hasVotes;
+        });
+
+        if (!cancelled) {
+          setTopMemes(cleanedFiltered);
+          // Update parent component's topMemes state if callback provided
+          if (onTopMemesUpdate) {
+            onTopMemesUpdate(cleanedFiltered);
+          }
         }
       } catch (e) {
-        console.error("Failed to load top memes from legacy:", e);
+        console.error("Failed to load top memes:", e);
         if (!cancelled) setTopMemes([]);
       } finally {
         if (!cancelled) setLoadingTop(false);

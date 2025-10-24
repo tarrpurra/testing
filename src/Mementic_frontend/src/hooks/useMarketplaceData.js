@@ -263,21 +263,12 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
         return;
       }
 
-      const resolved = await Promise.all(
-        entries.map(async (entry) => {
-          const memeId = safeBigIntToNumber(entry?.meme_id);
-          if (!Number.isFinite(memeId) || memeId <= 0) {
-            return null;
-          }
-          try {
-            const meme = await backendService.getMeme(memeId);
-            return meme ? { entry, meme } : null;
-          } catch (error) {
-            console.warn(`Failed to fetch meme ${memeId} for leaderboard:`, error);
-            return null;
-          }
-        })
-      );
+      const resolved = entries.map((entry) => {
+        if (entry.meme_data) {
+          return { entry, meme: entry.meme_data };
+        }
+        return null;
+      }).filter(Boolean);
 
       const valid = resolved.filter(Boolean);
       if (valid.length === 0) {
@@ -375,21 +366,12 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
           return;
         }
 
-        const resolved = await Promise.all(
-          entries.map(async (entry) => {
-            const memeId = safeBigIntToNumber(entry?.meme_id);
-            if (!Number.isFinite(memeId) || memeId <= 0) {
-              return null;
-            }
-            try {
-              const meme = await backendService.getMeme(memeId);
-              return meme ? { entry, meme } : null;
-            } catch (error) {
-              console.warn(`Failed to fetch meme ${memeId} for leaderboard:`, error);
-              return null;
-            }
-          })
-        );
+        const resolved = entries.map((entry) => {
+          if (entry.meme_data) {
+            return { entry, meme: entry.meme_data };
+          }
+          return null;
+        }).filter(Boolean);
 
         const valid = resolved.filter(Boolean);
         if (valid.length === 0) {
@@ -466,7 +448,10 @@ export const useMarketplaceData = (isAuthenticated, hasProfileName, page, sort, 
         }
       } catch (e) {
         console.error("Failed to load top memes:", e);
-        if (!cancelled) setErrorMsg("Failed to load top memes.");
+        if (!cancelled) {
+          setErrorMsg("Failed to load top memes.");
+          setTopMemes([]);
+        }
       } finally {
         if (!cancelled) setLoadingTop(false);
       }

@@ -464,8 +464,8 @@ fn close_finished_weeks() {
             .iter()
             .filter_map(|entry| {
                 let period = entry.value();
-                // Only finalize weeks that have actually ended and are not the current week
-                if !period.is_completed && period.week_id < current_week_id && now > period.end_time
+                // Only finalize weeks that have actually ended
+                if !period.is_completed && period.week_id <= current_week_id && now > period.end_time
                 {
                     Some(*entry.key())
                 } else {
@@ -808,6 +808,7 @@ pub fn get_top_liked_memes(limit: Option<u32>) -> TopLikedLeaderboard {
 /// Leaderboard for any week id. Returns None if week not found.
 #[query]
 pub fn get_week_leaderboard(week_id: u64, limit: Option<u32>) -> Option<LegacyWeeklyLeaderboard> {
+    let now = time();
     WEEKLY_PERIODS.with(|wp| {
         let periods = wp.borrow();
         let p = periods.get(&week_id)?;
@@ -825,11 +826,13 @@ pub fn get_week_leaderboard(week_id: u64, limit: Option<u32>) -> Option<LegacyWe
             })
             .collect();
 
+        let is_active = !p.is_completed && now <= p.end_time;
+
         Some(LegacyWeeklyLeaderboard {
             week_id,
             period: p,
             top_memes: entries,
-            is_active: false,
+            is_active,
         })
     })
 }
@@ -1187,6 +1190,24 @@ pub fn finalize_week(week_id: u64) -> Result<(), String> {
     // This sets week_ended=true so old memes are hidden from premarket
     let now = time();
     crate::rollover::finalize_memes_for_week(week_id, now / 1_000_000_000);
+
+    // If this is the current active week, advance to the next week
+    if week_id == crate::state::get_active_week_id() {
+        let next_week_id = week_id + 1;
+        crate::state::set_active_week_id(next_week_id);
+
+        // Create the next week period
+        let week_start = now + (BUFFER_S * 1_000_000_000);
+        let week_end = week_start + (WEEK_S * 1_000_000_000);
+        let new_period = WeeklyPeriod {
+            week_id: next_week_id,
+            start_time: week_start,
+            end_time: week_end,
+            is_completed: false,
+            meme_count: 0,
+        };
+        WEEKLY_PERIODS.with(|wp| wp.borrow_mut().insert(next_week_id, new_period));
+    }
 
     Ok(())
 }
